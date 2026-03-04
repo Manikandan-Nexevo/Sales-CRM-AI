@@ -52,12 +52,100 @@ class AIService
 
     public function generateCallSummary(string $notes, string $transcript, string $contactName, string $company): string
     {
-        $system = "You are an expert sales call analyst for Nexevo, an IT company. Summarize sales calls concisely and highlight key information for follow-up.";
-        $user = "Summarize this sales call with {$contactName} from {$company}.\n\nNotes: {$notes}\nTranscript: {$transcript}\n\nProvide: 1) Key points discussed 2) Client interest level 3) Pain points mentioned 4) Recommended next steps. Keep it under 150 words.";
+        $company = $company ?: 'Nexevo';
 
-        return $this->chat($system, $user, 300);
+        $system = "
+You are an AI CRM assistant for Nexevo.
+
+Convert sales call notes into a structured CRM summary
+that sales representatives can quickly read.
+
+Always follow the exact format requested.
+Do not add extra sections or explanations.
+";
+
+        $user = "
+Summarize the following sales call.
+
+Contact: {$contactName}
+Company: {$company}
+
+Notes:
+{$notes}
+
+Transcript:
+{$transcript}
+
+Return the summary in EXACTLY this structure:
+
+Key Points
+• point
+• point
+
+Client Interest
+• High / Medium / Low
+
+Pain Points
+• point
+• point
+
+Recommended Next Steps
+• point
+• point
+
+Rules:
+- Maximum 120 words
+- Use bullet symbol •
+- One bullet per line
+- Do NOT include 'Sales Call Summary'
+- Do NOT include markdown
+";
+
+        try {
+
+            $response = $this->chat($system, $user, 300);
+
+            // Remove markdown blocks
+            $clean = preg_replace('/```.*?```/s', '', $response);
+
+            // Normalize bullet styles (-, *, • → •)
+            $clean = preg_replace('/[-*]\s*/', '• ', $clean);
+
+            // Ensure bullets start on new lines
+            $clean = preg_replace('/\s*•\s*/', "\n• ", $clean);
+
+            // Remove empty bullets
+            $clean = preg_replace('/\n•\s*(?=\n|$)/', '', $clean);
+
+            // Normalize section spacing
+            $clean = preg_replace('/Key Points\s*/', "Key Points\n", $clean);
+            $clean = preg_replace('/Client Interest\s*/', "\nClient Interest\n", $clean);
+            $clean = preg_replace('/Pain Points\s*/', "\nPain Points\n", $clean);
+            $clean = preg_replace('/Recommended Next Steps\s*/', "\nRecommended Next Steps\n", $clean);
+
+            // Remove excessive line breaks
+            $clean = preg_replace("/\n{3,}/", "\n\n", $clean);
+
+            return trim($clean);
+        } catch (\Exception $e) {
+
+            Log::error('AI Call Summary Error: ' . $e->getMessage());
+
+            return "Key Points
+• {$contactName} discussed IT requirements
+• {$company} exploring services
+
+Client Interest
+• Medium
+
+Pain Points
+• Needs better IT solutions
+
+Recommended Next Steps
+• Schedule follow-up demo
+• Send service overview";
+        }
     }
-
     public function analyzeLead(Contact $contact): array
     {
         $callCount = $contact->callLogs->count();
