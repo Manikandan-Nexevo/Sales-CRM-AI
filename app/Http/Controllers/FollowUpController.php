@@ -161,4 +161,17 @@ class FollowUpController extends Controller
 
         return response()->json(['success' => true, 'whatsapp_url' => $whatsappUrl]);
     }
+
+    public function upcoming()
+    {
+        $now = now();
+        $tenMinutes = now()->addMinutes(10);
+
+        $followups = FollowUp::with('contact')
+            ->whereBetween('scheduled_at', [$now, $tenMinutes])
+            ->where('status', 'pending')
+            ->get();
+
+        return response()->json($followups);
+    }
 }

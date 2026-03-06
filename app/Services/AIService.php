@@ -244,29 +244,268 @@ Recommended Next Steps
 
     public function processVoiceCommand(string $command, User $user): array
     {
-        $system = "You are an AI assistant for Nexevo Sales CRM. Interpret voice commands from sales reps and return structured actions. Available actions: log_call, create_contact, schedule_followup, search_contact, get_briefing, navigate.";
-        $userMsg = "Voice command from sales rep: \"{$command}\"\n\nReturn JSON: {action: string, params: object, response: string (what to say back)}";
+        $cmd = strtolower(trim($command));
 
-        $response = $this->chat($system, $userMsg, 300);
+        /*
+    |--------------------------------------------------------------------------
+    | NAVIGATION COMMANDS
+    |--------------------------------------------------------------------------
+    */
 
-        // Clean & extract JSON safely
-        $clean = trim($response);
-
-        if (preg_match('/\{.*\}/s', $clean, $matches)) {
-            $clean = $matches[0];
+        if (str_contains($cmd, 'open contacts') || str_contains($cmd, 'show contacts')) {
+            return [
+                'action' => 'navigate',
+                'params' => ['page' => 'contacts'],
+                'response' => 'Opening contacts.'
+            ];
         }
 
-        $data = json_decode($clean, true);
-
-        if (is_array($data) && isset($data['action'])) {
-            return $data;
+        if (str_contains($cmd, 'open calls') || str_contains($cmd, 'open call logs')) {
+            return [
+                'action' => 'navigate',
+                'params' => ['page' => 'calls'],
+                'response' => 'Opening call logs.'
+            ];
         }
 
-        // Fallback if parsing fails
+        if (str_contains($cmd, 'open followups') || str_contains($cmd, 'open follow ups')) {
+            return [
+                'action' => 'navigate',
+                'params' => ['page' => 'followups'],
+                'response' => 'Opening followups.'
+            ];
+        }
+
+        if (str_contains($cmd, 'open dashboard') || str_contains($cmd, 'go home')) {
+            return [
+                'action' => 'navigate',
+                'params' => ['page' => 'dashboard'],
+                'response' => 'Opening dashboard.'
+            ];
+        }
+
+        /*
+    |--------------------------------------------------------------------------
+    | CONTACT CLARIFICATION
+    |--------------------------------------------------------------------------
+    */
+
+        if (session()->has('ai_contact_options')) {
+
+            $options = Contact::whereIn('id', session('ai_contact_options'))->get();
+            $original = session('ai_pending_command');
+
+            foreach ($options as $c) {
+
+                $name = strtolower($c->name);
+                $parts = explode(' ', $name);
+                $first = $parts[0] ?? '';
+                $last  = $parts[1] ?? '';
+
+                if (
+                    str_contains($cmd, $name) ||
+                    str_contains($cmd, $first) ||
+                    ($last && str_contains($cmd, $last))
+                ) {
+
+                    session()->forget([
+                        'ai_contact_options',
+                        'ai_pending_command'
+                    ]);
+
+                    $updatedCommand = preg_replace(
+                        '/\b' . preg_quote($first, '/') . '\b/i',
+                        $c->name,
+                        $original
+                    );
+
+                    return $this->processVoiceCommand($updatedCommand, $user);
+                }
+            }
+
+            return [
+                'action' => 'clarify_contact',
+                'params' => [
+                    'options' => $options->pluck('name')
+                ],
+                'response' => 'Please select one of the listed contacts.'
+            ];
+        }
+
+        /*
+    |--------------------------------------------------------------------------
+    | CONTACT MATCHING (FIXED)
+    |--------------------------------------------------------------------------
+    */
+
+        $contacts = Contact::select('id', 'name')->get();
+
+        $matches = [];
+        $firstMatches = [];
+
+        foreach ($contacts as $c) {
+
+            $name = strtolower($c->name);
+            $parts = explode(' ', $name);
+
+            $first = $parts[0] ?? '';
+            $last  = $parts[1] ?? '';
+
+            /* FULL NAME MATCH (highest priority) */
+
+            if (str_contains($cmd, $name)) {
+                $matches[] = $c;
+                continue;
+            }
+
+            /* FIRST NAME MATCH (fallback) */
+
+            if ($first && str_contains($cmd, $first)) {
+                $firstMatches[] = $c;
+            }
+        }
+
+        /* If full name found, ignore first-name matches */
+
+        if (count($matches) === 0) {
+            $matches = $firstMatches;
+        }
+
+        $matches = collect($matches)->unique('id')->values();
+
+        /*
+    |--------------------------------------------------------------------------
+    | MULTIPLE MATCHES
+    |--------------------------------------------------------------------------
+    */
+
+        if ($matches->count() > 1) {
+
+            session([
+                'ai_pending_command' => $command,
+                'ai_contact_options' => $matches->pluck('id')->toArray()
+            ]);
+
+            return [
+                'action' => 'clarify_contact',
+                'params' => [
+                    'options' => $matches->pluck('name')
+                ],
+                'response' => 'I found multiple contacts: ' . $matches->pluck('name')->implode(', ') . '. Which one?'
+            ];
+        }
+
+        /*
+    |--------------------------------------------------------------------------
+    | SINGLE CONTACT
+    |--------------------------------------------------------------------------
+    */
+
+        $contact = $matches->first();
+
+        /*
+    |--------------------------------------------------------------------------
+    | FOLLOWUP / CALL
+    |--------------------------------------------------------------------------
+    */
+
+        if (
+            str_contains($cmd, 'call') ||
+            str_contains($cmd, 'follow up') ||
+            str_contains($cmd, 'meeting') ||
+            str_contains($cmd, 'schedule')
+        ) {
+
+            if (!$contact) {
+                return [
+                    'action' => 'contact_not_found',
+                    'params' => [],
+                    'response' => 'Contact not found in CRM.'
+                ];
+            }
+
+            $scheduled = now();
+
+            if (str_contains($cmd, 'tomorrow')) {
+                $scheduled = now()->addDay();
+            }
+
+            if (str_contains($cmd, 'today')) {
+                $scheduled = now();
+            }
+
+            if (preg_match('/(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?|am|pm)?/i', $cmd, $m)) {
+
+                $hour = (int)$m[1];
+                $minute = isset($m[2]) ? (int)$m[2] : 0;
+
+                $period = strtolower($m[3] ?? '');
+
+                // Normalize period
+                $period = str_replace('.', '', $period);
+
+                if ($period === 'pm' && $hour < 12) {
+                    $hour += 12;
+                }
+
+                if ($period === 'am' && $hour == 12) {
+                    $hour = 0;
+                }
+
+                $scheduled->setTime($hour, $minute, 0);
+            }
+
+            /* -----------------------------
+   EXTRACT NOTES FROM COMMAND
+------------------------------*/
+
+            $notes = '';
+
+            if (preg_match('/(?:note|notes|with notes|add note|message)\s+(.*)/i', $cmd, $match)) {
+                $notes = ucfirst(trim($match[1]));
+            }
+            return [
+                'action' => 'open_followup',
+                'params' => [
+                    'contact_id' => $contact->id,
+                    'contact_name' => $contact->name,
+                    'type' => 'call',
+                    'subject' => "Call with {$contact->name}",
+                    'message' => $notes,
+                    'scheduled_at' => $scheduled->toDateTimeString()
+                ],
+                'response' => "Scheduling call with {$contact->name}."
+            ];
+        }
+
+        /*
+    |--------------------------------------------------------------------------
+    | OPEN CONTACT
+    |--------------------------------------------------------------------------
+    */
+
+        if ($contact) {
+
+            return [
+                'action' => 'open_contact',
+                'params' => [
+                    'contact_id' => $contact->id,
+                    'contact_name' => $contact->name
+                ],
+                'response' => "Opening {$contact->name}'s contact."
+            ];
+        }
+
+        /*
+    |--------------------------------------------------------------------------
+    | UNKNOWN
+    |--------------------------------------------------------------------------
+    */
+
         return [
             'action' => 'unknown',
             'params' => [],
-            'response' => 'Sorry, I did not understand that command.'
+            'response' => 'Sorry, I could not understand.'
         ];
     }
 

@@ -79,58 +79,10 @@ class AIController extends Controller
     {
         $request->validate(['command' => 'required|string']);
 
-        $result = $this->aiService->processVoiceCommand($request->command, $request->user());
+        $user = $request->user();
 
-        if ($result['action'] === 'search_contact') {
+        $result = $this->aiService->processVoiceCommand($request->command, $user);
 
-            $contact = Contact::where('name', 'LIKE', '%' . $request->command . '%')
-                ->orWhere('email', 'LIKE', '%' . $request->command . '%')
-                ->first();
-
-            $command = strtolower($request->command);
-
-
-            // Get all contacts
-            $contacts = Contact::select('id', 'name', 'email')->get();
-
-            $contact = null;
-
-            foreach ($contacts as $c) {
-                if (
-                    str_contains($command, strtolower($c->name)) ||
-                    str_contains($command, strtolower($c->email))
-                ) {
-                    $contact = $c;
-                    break;
-                }
-            }
-
-            if (!$contact) {
-                return response()->json([
-                    'result' => [
-                        'action' => 'generate_email',
-                        'error' => 'Contact not found'
-                    ]
-                ]);
-            }
-
-            // Call your existing generateEmail logic
-            $email = $this->aiService->generateEmail(
-                $contact,
-                $result['params']['purpose'] ?? 'Follow up',
-                $result['params']['tone'] ?? 'friendly'
-            );
-
-            return response()->json([
-                'result' => [
-                    'action' => 'generate_email',
-                    'contact_id' => $contact->id,
-                    'contact_name' => $contact->name,
-                    'contact_email' => $contact->email,
-                    'email' => $email
-                ]
-            ]);
-        }
         return response()->json(['result' => $result]);
     }
 
