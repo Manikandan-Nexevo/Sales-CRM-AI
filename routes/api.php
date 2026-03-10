@@ -9,6 +9,7 @@ use App\Http\Controllers\AIController;
 use App\Http\Controllers\FollowUpController;
 use App\Http\Controllers\ExportController;
 use App\Http\Controllers\UserController;
+use App\Http\Controllers\WhatsappController;
 
 /*
 |--------------------------------------------------------------------------
@@ -78,3 +79,11 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/users/{user}/performance', [UserController::class, 'performance']);
     });
 });
+
+
+Route::post('/send-whatsapp', [WhatsappController::class, 'sendWhatsappMessage']);
+
+Route::get('/whatsapp/webhook',  [WhatsappController::class, 'verify']);
+Route::post('/whatsapp/webhook', [WhatsappController::class, 'webhook']);
+
+Route::get('/list-messages',  [WhatsappController::class, 'listmessages']);
