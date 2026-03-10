@@ -152,15 +152,64 @@ Recommended Next Steps
         $lastCallNote = $contact->callLogs->first()?->notes ?? 'No calls yet';
 
         $system = "You are a B2B sales analyst. Analyze leads for an IT company called Nexevo that provides software development and IT services.";
-        $user = "Analyze this lead and provide a JSON response with these fields: score (0-100), stage (cold/warm/hot), buy_intent (low/medium/high), recommended_approach (string), key_insights (array of 3 strings), next_best_action (string).\n\nContact: {$contact->name}, {$contact->designation} at {$contact->company}\nIndustry: {$contact->industry}\nStatus: {$contact->status}\nCalls made: {$callCount}\nLast call note: {$lastCallNote}\n\nReturn ONLY valid JSON.";
+
+        $user = "Analyze this lead and provide a JSON response with these fields:
+    score (0-100),
+    stage (cold/warm/hot),
+    buy_intent (low/medium/high),
+    recommended_approach (string),
+    key_insights (array of 3 strings),
+    next_best_action (string).
+
+Contact: {$contact->name}, {$contact->designation} at {$contact->company}
+Industry: {$contact->industry}
+Status: {$contact->status}
+Calls made: {$callCount}
+Last call note: {$lastCallNote}
+
+Return ONLY valid JSON.";
 
         $response = $this->chat($system, $user, 400);
 
         try {
+
             $clean = preg_replace('/```json|```/', '', $response);
-            return json_decode(trim($clean), true) ?? $this->defaultAnalysis();
+            $analysis = json_decode(trim($clean), true) ?? $this->defaultAnalysis();
+
+            /* --------------------------------------------------
+           CALCULATE CRM LEAD SCORE (REAL SCORING)
+        -------------------------------------------------- */
+
+            $score = $this->calculateLeadScore($contact);
+
+            /* --------------------------------------------------
+           UPDATE CONTACT AI SCORE
+        -------------------------------------------------- */
+
+            $contact->update([
+                'ai_score' => $score
+            ]);
+
+            /* --------------------------------------------------
+           ADD SCORE INTO RESPONSE
+        -------------------------------------------------- */
+
+            $analysis['score'] = $score;
+
+            return $analysis;
         } catch (\Exception $e) {
-            return $this->defaultAnalysis();
+
+            $analysis = $this->defaultAnalysis();
+
+            $score = $this->calculateLeadScore($contact);
+
+            $contact->update([
+                'ai_score' => $score
+            ]);
+
+            $analysis['score'] = $score;
+
+            return $analysis;
         }
     }
 
@@ -244,32 +293,785 @@ Recommended Next Steps
 
     public function processVoiceCommand(string $command, User $user): array
     {
-        $system = "You are an AI assistant for Nexevo Sales CRM. Interpret voice commands from sales reps and return structured actions. Available actions: log_call, create_contact, schedule_followup, search_contact, get_briefing, navigate.";
-        $userMsg = "Voice command from sales rep: \"{$command}\"\n\nReturn JSON: {action: string, params: object, response: string (what to say back)}";
+        $cmd = strtolower(trim($command));
 
-        $response = $this->chat($system, $userMsg, 300);
+        /*
+    |--------------------------------------------------------------------------
+    | NAVIGATION COMMANDS
+    |--------------------------------------------------------------------------
+    */
 
-        // Clean & extract JSON safely
-        $clean = trim($response);
-
-        if (preg_match('/\{.*\}/s', $clean, $matches)) {
-            $clean = $matches[0];
+        if (str_contains($cmd, 'open contacts') || str_contains($cmd, 'show contacts')) {
+            return [
+                'action' => 'navigate',
+                'params' => ['page' => 'contacts'],
+                'response' => 'Opening contacts.'
+            ];
         }
 
-        $data = json_decode($clean, true);
-
-        if (is_array($data) && isset($data['action'])) {
-            return $data;
+        if (str_contains($cmd, 'open calls') || str_contains($cmd, 'open call logs')) {
+            return [
+                'action' => 'navigate',
+                'params' => ['page' => 'calls'],
+                'response' => 'Opening call logs.'
+            ];
         }
 
-        // Fallback if parsing fails
+        if (str_contains($cmd, 'open followups') || str_contains($cmd, 'open follow ups')) {
+            return [
+                'action' => 'navigate',
+                'params' => ['page' => 'followups'],
+                'response' => 'Opening followups.'
+            ];
+        }
+
+        if (str_contains($cmd, 'open dashboard') || str_contains($cmd, 'go home')) {
+            return [
+                'action' => 'navigate',
+                'params' => ['page' => 'dashboard'],
+                'response' => 'Opening dashboard.'
+            ];
+        }
+
+        /*
+|--------------------------------------------------------------------------
+| SHOW HOT LEADS
+|--------------------------------------------------------------------------
+*/
+
+        if (
+            str_contains($cmd, 'hot leads') ||
+            str_contains($cmd, 'show hot leads') ||
+            str_contains($cmd, 'high priority leads')
+        ) {
+
+            $leads = Contact::where('priority', 'high')
+                ->take(5)
+                ->get();
+
+            if ($leads->isEmpty()) {
+                return [
+                    'action' => 'none',
+                    'params' => [],
+                    'response' => 'You currently have no high priority leads.'
+                ];
+            }
+
+            $names = $leads->pluck('name')->implode(', ');
+
+            return [
+                'action' => 'navigate',
+                'params' => ['page' => 'contacts'],
+                'response' => "You have {$leads->count()} hot leads: {$names}. I'm opening the contacts list."
+            ];
+        }
+
+        /*
+|--------------------------------------------------------------------------
+| BEST LEADS
+|--------------------------------------------------------------------------
+*/
+
+        if (
+            str_contains($cmd, 'best leads') ||
+            str_contains($cmd, 'top leads') ||
+            str_contains($cmd, 'highest scoring leads')
+        ) {
+
+            $leads = Contact::orderByDesc('ai_score')
+                ->take(3)
+                ->get();
+
+            if ($leads->isEmpty()) {
+                return [
+                    'action' => 'none',
+                    'params' => [],
+                    'response' => 'No leads available.'
+                ];
+            }
+
+            $text = "Your top leads right now are:\n\n";
+
+            foreach ($leads as $lead) {
+                $text .= "{$lead->name} from {$lead->company} with a score of {$lead->ai_score}.\n";
+            }
+
+            return [
+                'action' => 'navigate',
+                'params' => ['page' => 'contacts'],
+                'response' => $text
+            ];
+        }
+
+        /*
+|--------------------------------------------------------------------------
+| INACTIVE LEADS
+|--------------------------------------------------------------------------
+*/
+
+        if (
+            str_contains($cmd, 'inactive leads') ||
+            str_contains($cmd, 'cold leads') ||
+            str_contains($cmd, 'not contacted')
+        ) {
+
+            $leads = Contact::whereDoesntHave('callLogs', function ($q) {
+                $q->where('created_at', '>=', now()->subDays(7));
+            })->take(5)->get();
+
+            if ($leads->isEmpty()) {
+                return [
+                    'action' => 'none',
+                    'params' => [],
+                    'response' => 'All leads have been contacted recently. Good job!'
+                ];
+            }
+
+            $names = $leads->pluck('name')->implode(', ');
+
+            return [
+                'action' => 'navigate',
+                'params' => ['page' => 'contacts'],
+                'response' => "{$leads->count()} leads haven't been contacted in over a week: {$names}."
+            ];
+        }
+
+        /*
+|--------------------------------------------------------------------------
+| FOLLOWUPS TODAY
+|--------------------------------------------------------------------------
+*/
+
+        if (
+            str_contains($cmd, 'follow ups today') ||
+            str_contains($cmd, 'followups today') ||
+            str_contains($cmd, 'who should i follow up')
+        ) {
+
+            $count = $user->followUps()
+                ->whereDate('scheduled_at', today())
+                ->count();
+
+            if ($count === 0) {
+                return [
+                    'action' => 'none',
+                    'params' => [],
+                    'response' => 'You have no follow-ups scheduled for today.'
+                ];
+            }
+
+            return [
+                'action' => 'navigate',
+                'params' => ['page' => 'followups'],
+                'response' => "You have {$count} follow-ups scheduled today. Opening your follow-ups."
+            ];
+        }
+
+        /*
+|--------------------------------------------------------------------------
+| DEALS AT RISK
+|--------------------------------------------------------------------------
+*/
+
+        if (
+            str_contains($cmd, 'deals at risk') ||
+            str_contains($cmd, 'risk deals') ||
+            str_contains($cmd, 'at risk')
+        ) {
+
+            $leads = Contact::whereNotIn('status', ['closed_won', 'closed_lost'])
+                ->get()
+                ->filter(function ($lead) {
+
+                    $last = $this->getLastContactDate($lead);
+
+                    $days = $last
+                        ? now()->diffInDays($last)
+                        : 30;
+
+                    $risk = false;
+
+                    if ($days > 14) {
+                        $risk = true;
+                    }
+
+                    if ($days > 7 && in_array($lead->status, ['hot', 'proposal'])) {
+                        $risk = true;
+                    }
+
+                    if ($lead->ai_score < 50) {
+                        $risk = true;
+                    }
+
+                    return $risk;
+                })
+                ->sortBy('ai_score')
+                ->take(5);
+
+            if ($leads->isEmpty()) {
+                return [
+                    'action' => 'none',
+                    'params' => [],
+                    'response' => 'No deals appear to be at risk right now.'
+                ];
+            }
+
+            $text = "⚠ These deals may be at risk:\n\n";
+
+            foreach ($leads as $lead) {
+
+                $last = $this->getLastContactDate($lead);
+
+                $days = $last
+                    ? now()->diffInDays($last)
+                    : 'never';
+
+                $text .= "{$lead->name} from {$lead->company}\n";
+                $text .= "AI score: {$lead->ai_score}\n";
+                $text .= "Last contact: {$days} days ago\n\n";
+            }
+
+            $text .= "I recommend reaching out to re-engage these leads.";
+
+            return [
+                'action' => 'navigate',
+                'params' => ['page' => 'contacts'],
+                'response' => $text
+            ];
+        }
+        /*
+    |--------------------------------------------------------------------------
+    | DAILY BRIEFING
+    |--------------------------------------------------------------------------
+    */
+
+        if (
+            str_contains($cmd, 'brief') ||
+            str_contains($cmd, 'daily briefing') ||
+            str_contains($cmd, 'today update')
+        ) {
+
+            $data = $this->generateDailyBriefing($user);
+
+            $response = "Good morning {$user->name}. Here's your CRM update.\n\n";
+
+            $response .= "You have {$data['followups_today']} follow-ups scheduled today";
+
+            if ($data['overdue_followups'] > 0) {
+                $response .= " and {$data['overdue_followups']} overdue follow-ups.";
+            }
+
+            $response .= "\n\nYou've logged {$data['calls_today']} calls today.";
+
+            $response .= "\n\nThere are {$data['hot_leads']} hot leads in the pipeline.";
+
+            if ($data['inactive_leads'] > 0) {
+                $response .= "\n\n{$data['inactive_leads']} leads haven't been contacted in 7 days.";
+            }
+
+            if ($data['top_rep']) {
+                $response .= "\n\nTop performer today is {$data['top_rep']} with {$data['top_rep_calls']} calls.";
+            }
+
+            $response .= "\n\nI recommend starting with your hot leads.";
+
+            return [
+                'action' => 'daily_briefing',
+                'params' => $data,
+                'response' => $response
+            ];
+        }
+
+        /*
+|--------------------------------------------------------------------------
+| SUMMARIZE CALL NOTES
+|--------------------------------------------------------------------------
+*/
+
+        if (
+            str_contains($cmd, 'summarize call') ||
+            str_contains($cmd, 'summarize my call') ||
+            str_contains($cmd, 'call summary')
+        ) {
+
+            return [
+                'action' => 'open_call_log',
+                'params' => [
+                    'mode' => 'ai_summary'
+                ],
+                'response' => 'Please paste your call notes and I will summarize them.'
+            ];
+        }
+
+        /*
+|--------------------------------------------------------------------------
+| DEAL PROBABILITY
+|--------------------------------------------------------------------------
+*/
+
+        if (
+            str_contains($cmd, 'deal probability') ||
+            str_contains($cmd, 'chance to close') ||
+            str_contains($cmd, 'closing chance')
+        ) {
+
+            $lead = $this->getNextBestLead();
+
+            if (!$lead) {
+                return [
+                    'action' => 'none',
+                    'params' => [],
+                    'response' => 'No leads available for prediction.'
+                ];
+            }
+
+            if (in_array($lead->status, ['closed_won', 'closed_lost'])) {
+
+                return [
+                    'action' => 'none',
+                    'params' => [],
+                    'response' => "This lead is already {$lead->status}. No probability prediction is needed."
+                ];
+            }
+
+            $probability = $this->predictDealProbability($lead);
+
+            $response = "The lead most likely to close is {$lead->name} from {$lead->company}.\n\n";
+            $response .= "Estimated closing probability: {$probability}%.\n\n";
+
+            if ($probability > 75) {
+                $response .= "This is a strong opportunity. I recommend scheduling a demo or proposal.";
+            } elseif ($probability > 50) {
+                $response .= "This lead is promising but needs further engagement.";
+            } else {
+                $response .= "This lead still needs nurturing.";
+            }
+
+            return [
+                'action' => 'open_contact',
+                'params' => ['contact_id' => $lead->id],
+                'response' => $response
+            ];
+        }
+        /*
+|--------------------------------------------------------------------------
+| NEXT BEST LEAD
+|--------------------------------------------------------------------------
+*/
+
+        if (
+            str_contains($cmd, 'which lead') ||
+            str_contains($cmd, 'who should i call') ||
+            str_contains($cmd, 'next lead') ||
+            str_contains($cmd, 'next call')
+        ) {
+
+            $lead = $this->getNextBestLead();
+
+            if (!$lead) {
+                return [
+                    'action' => 'none',
+                    'params' => [],
+                    'response' => 'You currently have no leads that need attention.'
+                ];
+            }
+
+            $days = $lead->last_contact_days ?? 0;
+
+            $response = "You should call {$lead->name} from {$lead->company} next.\n\n";
+
+            if ($lead->priority === 'high') {
+                $response .= "This is a high priority lead. ";
+            }
+
+            if ($days > 0) {
+                $response .= "Your last interaction was {$days} days ago. ";
+            }
+
+            $response .= "\n\nReaching out now could improve conversion chances.";
+
+            return [
+                'action' => 'open_contact',
+                'params' => [
+                    'contact_id' => $lead->id
+                ],
+                'response' => $response
+            ];
+        }
+
+        /*
+    |--------------------------------------------------------------------------
+    | CONTACT CLARIFICATION
+    |--------------------------------------------------------------------------
+    */
+
+        if (session()->has('ai_contact_options')) {
+
+            $options = Contact::whereIn('id', session('ai_contact_options'))->get();
+            $original = session('ai_pending_command');
+
+            foreach ($options as $c) {
+
+                $name = strtolower($c->name);
+                $parts = explode(' ', $name);
+                $first = $parts[0] ?? '';
+                $last  = $parts[1] ?? '';
+
+                if (
+                    str_contains($cmd, $name) ||
+                    str_contains($cmd, $first) ||
+                    ($last && str_contains($cmd, $last))
+                ) {
+
+                    session()->forget([
+                        'ai_contact_options',
+                        'ai_pending_command'
+                    ]);
+
+                    $updatedCommand = preg_replace(
+                        '/\b' . preg_quote($first, '/') . '\b/i',
+                        $c->name,
+                        $original
+                    );
+
+                    return $this->processVoiceCommand($updatedCommand, $user);
+                }
+            }
+
+            return [
+                'action' => 'clarify_contact',
+                'params' => [
+                    'options' => $options->pluck('name')
+                ],
+                'response' => 'Please select one of the listed contacts.'
+            ];
+        }
+
+        /*
+    |--------------------------------------------------------------------------
+    | CONTACT MATCHING (FIXED)
+    |--------------------------------------------------------------------------
+    */
+
+        $contacts = Contact::select('id', 'name')->get();
+
+        $matches = [];
+        $firstMatches = [];
+
+        foreach ($contacts as $c) {
+
+            $name = strtolower($c->name);
+            $parts = explode(' ', $name);
+
+            $first = $parts[0] ?? '';
+            $last  = $parts[1] ?? '';
+
+            /* FULL NAME MATCH (highest priority) */
+
+            if (str_contains($cmd, $name)) {
+                $matches[] = $c;
+                continue;
+            }
+
+            /* FIRST NAME MATCH (fallback) */
+
+            if ($first && str_contains($cmd, $first)) {
+                $firstMatches[] = $c;
+            }
+        }
+
+        /* If full name found, ignore first-name matches */
+
+        if (count($matches) === 0) {
+            $matches = $firstMatches;
+        }
+
+        $matches = collect($matches)->unique('id')->values();
+
+        /*
+    |--------------------------------------------------------------------------
+    | MULTIPLE MATCHES
+    |--------------------------------------------------------------------------
+    */
+
+        if ($matches->count() > 1) {
+
+            session([
+                'ai_pending_command' => $command,
+                'ai_contact_options' => $matches->pluck('id')->toArray()
+            ]);
+
+            return [
+                'action' => 'clarify_contact',
+                'params' => [
+                    'options' => $matches->pluck('name')
+                ],
+                'response' => 'I found multiple contacts: ' . $matches->pluck('name')->implode(', ') . '. Which one?'
+            ];
+        }
+
+        /*
+    |--------------------------------------------------------------------------
+    | SINGLE CONTACT
+    |--------------------------------------------------------------------------
+    */
+
+        $contact = $matches->first();
+
+        /*
+    |--------------------------------------------------------------------------
+    | FOLLOWUP / CALL
+    |--------------------------------------------------------------------------
+    */
+
+        if (
+            str_contains($cmd, 'call') ||
+            str_contains($cmd, 'follow up') ||
+            str_contains($cmd, 'meeting') ||
+            str_contains($cmd, 'schedule')
+        ) {
+
+            if (!$contact) {
+                return [
+                    'action' => 'contact_not_found',
+                    'params' => [],
+                    'response' => 'Contact not found in CRM.'
+                ];
+            }
+
+            $scheduled = now();
+
+            if (str_contains($cmd, 'tomorrow')) {
+                $scheduled = now()->addDay();
+            }
+
+            if (str_contains($cmd, 'today')) {
+                $scheduled = now();
+            }
+
+            if (preg_match('/(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?|am|pm)?/i', $cmd, $m)) {
+
+                $hour = (int)$m[1];
+                $minute = isset($m[2]) ? (int)$m[2] : 0;
+
+                $period = strtolower($m[3] ?? '');
+
+                // Normalize period
+                $period = str_replace('.', '', $period);
+
+                if ($period === 'pm' && $hour < 12) {
+                    $hour += 12;
+                }
+
+                if ($period === 'am' && $hour == 12) {
+                    $hour = 0;
+                }
+
+                $scheduled->setTime($hour, $minute, 0);
+            }
+
+
+
+            /* -----------------------------
+   EXTRACT NOTES FROM COMMAND
+------------------------------*/
+
+            $notes = '';
+
+            if (preg_match('/(?:note|notes|with notes|add note|message)\s+(.*)/i', $cmd, $match)) {
+                $notes = ucfirst(trim($match[1]));
+            }
+            return [
+                'action' => 'open_followup',
+                'params' => [
+                    'contact_id' => $contact->id,
+                    'contact_name' => $contact->name,
+                    'type' => 'call',
+                    'subject' => "Call with {$contact->name}",
+                    'message' => $notes,
+                    'scheduled_at' => $scheduled->toDateTimeString()
+                ],
+                'response' => "Scheduling call with {$contact->name}."
+            ];
+        }
+
+        /*
+    |--------------------------------------------------------------------------
+    | OPEN CONTACT
+    |--------------------------------------------------------------------------
+    */
+
+        if ($contact) {
+
+            return [
+                'action' => 'open_contact',
+                'params' => [
+                    'contact_id' => $contact->id,
+                    'contact_name' => $contact->name
+                ],
+                'response' => "Opening {$contact->name}'s contact."
+            ];
+        }
+
+        /*
+    |--------------------------------------------------------------------------
+    | UNKNOWN
+    |--------------------------------------------------------------------------
+    */
+
         return [
             'action' => 'unknown',
             'params' => [],
-            'response' => 'Sorry, I did not understand that command.'
+            'response' => 'Sorry, I could not understand.'
         ];
     }
 
+
+    public function generateFollowUpFromCall(Contact $contact, string $summary): string
+    {
+        $system = "You are a senior sales executive at Nexevo IT company.";
+
+        $user = "Write a follow-up email after a sales call.
+
+Contact: {$contact->name} from {$contact->company}
+
+Call summary:
+{$summary}
+
+Rules:
+- Friendly professional tone
+- Under 150 words
+- Mention next steps if possible
+- End with:
+Best regards,
+Nexevo Sales Team";
+
+        return $this->chat($system, $user, 300);
+    }
+    private function getNextBestLead()
+    {
+        $lead = Contact::whereNotIn('status', ['closed_won', 'closed_lost'])
+            ->withMax('callLogs', 'created_at')
+            ->orderByRaw("
+            CASE status
+                WHEN 'proposal' THEN 5
+                WHEN 'hot' THEN 4
+                WHEN 'qualified' THEN 3
+                WHEN 'interested' THEN 2
+                WHEN 'contacted' THEN 1
+                ELSE 0
+            END DESC
+        ")
+            ->orderByDesc('ai_score')
+            ->first();
+
+        if (!$lead) {
+            return null;
+        }
+
+        if ($lead->call_logs_max_created_at) {
+            $lead->last_contact_days = now()
+                ->diffInDays($lead->call_logs_max_created_at);
+        }
+
+        return $lead;
+    }
+    /*
+    |--------------------------------------------------------------------------
+    | LAST CONTACT DATE
+    |--------------------------------------------------------------------------
+    */
+
+    private function getLastContactDate(Contact $contact)
+    {
+        $lastCall = $contact->callLogs()->max('created_at');
+
+        $lastFollowup = $contact->followUps()->max('created_at');
+
+        $lastEmail = method_exists($contact, 'emails')
+            ? $contact->emails()->max('created_at')
+            : null;
+
+        return collect([$lastCall, $lastFollowup, $lastEmail])
+            ->filter()
+            ->max();
+    }
+
+    private function calculateLeadScore(Contact $contact): int
+    {
+        $score = 0;
+
+        if ($contact->priority === 'high') {
+            $score += 30;
+        }
+
+        if ($contact->priority === 'medium') {
+            $score += 15;
+        }
+
+        if ($contact->status === 'interested') {
+            $score += 25;
+        }
+
+        if ($contact->status === 'hot') {
+            $score += 35;
+        }
+
+        $callCount = $contact->callLogs()->count();
+
+        if ($callCount >= 3) {
+            $score += 20;
+        }
+
+        if ($callCount >= 5) {
+            $score += 10;
+        }
+
+        $lastCall = $contact->callLogs()->latest()->first();
+
+        if ($lastCall) {
+
+            $days = now()->diffInDays($lastCall->created_at);
+
+            if ($days <= 2) {
+                $score += 20;
+            }
+
+            if ($days > 7) {
+                $score -= 15;
+            }
+        }
+
+        $pendingFollowups = $contact->followUps()
+            ->where('status', 'pending')
+            ->count();
+
+        if ($pendingFollowups > 0) {
+            $score += 10;
+        }
+
+        return max(0, min(100, $score));
+    }
+
+    private function predictDealProbability(Contact $contact): int
+    {
+        $base = $contact->ai_score ?? 0;
+
+        $stageBoost = match ($contact->status) {
+            'proposal' => 40,
+            'hot' => 30,
+            'qualified' => 20,
+            'interested' => 10,
+            default => 0
+        };
+
+        $callCount = $contact->callLogs()->count();
+        $engagementBoost = min(20, $callCount * 5);
+
+        $probability = $base + $stageBoost + $engagementBoost;
+
+        return min(100, $probability);
+    }
     public function generateLinkedInMessage(Contact $contact, string $purpose): string
     {
         $system = "You are a LinkedIn outreach specialist for Nexevo IT company. Write personalized connection requests and messages that get responses.";
@@ -280,21 +1082,43 @@ Recommended Next Steps
 
     public function generateDailyBriefing(User $user): array
     {
-        $pendingFollowups = $user->followUps()->dueToday()->count();
-        $todayCalls = $user->todayCallCount();
-        $target = $user->target_calls_daily;
+        $today = now()->startOfDay();
 
-        $system = "You are an AI sales coach for Nexevo IT company. Give motivating, actionable daily briefings to sales reps.";
-        $userMsg = "Daily briefing for {$user->name}.\nTarget calls today: {$target}\nCalls done: {$todayCalls}\nPending follow-ups: {$pendingFollowups}\n\nReturn JSON: {greeting: string, priority: string, tip: string, motivation: string}";
+        $followupsToday = $user->followUps()
+            ->whereDate('scheduled_at', $today)
+            ->count();
 
-        $response = $this->chat($system, $userMsg, 300);
+        $overdueFollowups = $user->followUps()
+            ->where('scheduled_at', '<', $today)
+            ->where('status', 'pending')
+            ->count();
 
-        try {
-            $clean = preg_replace('/```json|```/', '', $response);
-            return json_decode(trim($clean), true) ?? $this->defaultBriefing($user->name);
-        } catch (\Exception $e) {
-            return $this->defaultBriefing($user->name);
-        }
+        $callsToday = $user->callLogs()
+            ->whereDate('created_at', $today)
+            ->count();
+
+        $hotLeads = Contact::where('priority', 'high')->count();
+
+        $inactiveLeads = Contact::whereDoesntHave('callLogs', function ($q) {
+            $q->where('created_at', '>=', now()->subDays(7));
+        })->count();
+
+        // Team stats
+        $topRep = User::withCount(['callLogs' => function ($q) {
+            $q->whereDate('created_at', today());
+        }])
+            ->orderByDesc('call_logs_count')
+            ->first();
+
+        return [
+            'followups_today' => $followupsToday,
+            'overdue_followups' => $overdueFollowups,
+            'calls_today' => $callsToday,
+            'hot_leads' => $hotLeads,
+            'inactive_leads' => $inactiveLeads,
+            'top_rep' => $topRep?->name,
+            'top_rep_calls' => $topRep?->call_logs_count
+        ];
     }
 
     public function parseVoiceTranscript(string $transcript, Contact $contact): array

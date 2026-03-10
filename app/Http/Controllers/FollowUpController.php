@@ -7,6 +7,7 @@ use App\Services\AIService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Mail;
+use App\Models\User;
 
 class FollowUpController extends Controller
 {
@@ -160,5 +161,27 @@ class FollowUpController extends Controller
         $followup->update(['whatsapp_sent' => true]);
 
         return response()->json(['success' => true, 'whatsapp_url' => $whatsappUrl]);
+    }
+
+    public function upcomingFollowups(Request $request)
+    {
+        $user = $request->user();
+
+        return $user
+            ->followUps()
+            ->where('status', 'pending')
+            ->whereBetween('scheduled_at', [now(), now()->addMinutes(10)])
+            ->orderBy('scheduled_at')
+            ->with('contact:id,name')
+            ->get()
+            ->map(function ($f) {
+                return [
+                    'id' => $f->id,
+                    'contact_id' => $f->contact_id, // IMPORTANT
+                    'contact_name' => $f->contact?->name,
+                    'subject' => $f->subject,
+                    'scheduled_at' => $f->scheduled_at
+                ];
+            });
     }
 }

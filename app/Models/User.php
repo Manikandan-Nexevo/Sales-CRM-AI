@@ -6,14 +6,22 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
+use App\Models\FollowUp;
 
 class User extends Authenticatable
 {
     use HasApiTokens, HasFactory, Notifiable;
 
     protected $fillable = [
-        'name', 'email', 'password', 'role', 'phone',
-        'avatar', 'target_calls_daily', 'target_leads_monthly', 'is_active'
+        'name',
+        'email',
+        'password',
+        'role',
+        'phone',
+        'avatar',
+        'target_calls_daily',
+        'target_leads_monthly',
+        'is_active'
     ];
 
     protected $hidden = ['password', 'remember_token'];
