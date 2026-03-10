@@ -11,11 +11,28 @@ class Contact extends Model
     use HasFactory, SoftDeletes;
 
     protected $fillable = [
-        'name', 'company', 'designation', 'email', 'phone', 'phone_alt',
-        'linkedin_url', 'linkedin_connected', 'website', 'industry',
-        'company_size', 'location', 'source', 'status', 'priority',
-        'assigned_to', 'notes', 'ai_score', 'ai_analysis', 'tags',
-        'last_contacted_at', 'next_followup_at'
+        'name',
+        'company',
+        'designation',
+        'email',
+        'phone',
+        'phone_alt',
+        'linkedin_url',
+        'linkedin_connected',
+        'website',
+        'industry',
+        'company_size',
+        'location',
+        'source',
+        'status',
+        'priority',
+        'assigned_to',
+        'notes',
+        'ai_score',
+        'ai_analysis',
+        'tags',
+        'last_contacted_at',
+        'next_followup_at'
     ];
 
     protected $casts = [
@@ -51,9 +68,9 @@ class Contact extends Model
     {
         return $query->where(function ($q) use ($term) {
             $q->where('name', 'LIKE', "%{$term}%")
-              ->orWhere('company', 'LIKE', "%{$term}%")
-              ->orWhere('email', 'LIKE', "%{$term}%")
-              ->orWhere('phone', 'LIKE', "%{$term}%");
+                ->orWhere('company', 'LIKE', "%{$term}%")
+                ->orWhere('email', 'LIKE', "%{$term}%")
+                ->orWhere('phone', 'LIKE', "%{$term}%");
         });
     }
 }

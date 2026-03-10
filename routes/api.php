@@ -51,12 +51,14 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/calls/voice-transcript', [CallLogController::class, 'processVoiceTranscript']);
 
     // Follow-ups
-    Route::apiResource('followups', FollowUpController::class);
+    Route::get('/followups/upcoming', [FollowUpController::class, 'upcomingFollowups']);
     Route::get('/followups/due/today', [FollowUpController::class, 'dueToday']);
+    Route::apiResource('followups', FollowUpController::class);
+
     Route::put('/followups/{followup}/complete', [FollowUpController::class, 'markComplete']);
     Route::post('/followups/{followup}/send-email', [FollowUpController::class, 'sendEmail']);
     Route::post('/followups/{followup}/send-whatsapp', [FollowUpController::class, 'sendWhatsApp']);
-    Route::get('/followups/upcoming', [FollowUpController::class, 'upcoming']);
+
 
     // AI Features
     Route::post('/ai/suggest-response', [AIController::class, 'suggestResponse']);

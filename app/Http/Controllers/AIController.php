@@ -60,7 +60,15 @@ class AIController extends Controller
             $request->company ?? 'Unknown'
         );
 
-        return response()->json(['summary' => $summary]);
+        $followup = $this->aiService->generateFollowUpFromCall(
+            new Contact(['name' => $request->contact_name, 'company' => $request->company]),
+            $summary
+        );
+
+        return response()->json([
+            'summary' => $summary,
+            'followup_email' => $followup
+        ]);
     }
 
     public function suggestNextAction(Request $request): JsonResponse
