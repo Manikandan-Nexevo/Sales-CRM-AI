@@ -5,8 +5,11 @@ namespace App\Http\Controllers;
 use App\Models\CallLog;
 use App\Models\Contact;
 use App\Models\FollowUp;
+use App\Models\Whatsapp_Message;
 use App\Services\AIService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Http\JsonResponse;
 
 class CallLogController extends Controller
@@ -210,4 +213,5 @@ class CallLogController extends Controller
 
         return response()->json(['success' => true, 'parsed' => $parsed]);
     }
+
 }
