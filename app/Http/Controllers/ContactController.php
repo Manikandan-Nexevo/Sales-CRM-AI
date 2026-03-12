@@ -7,6 +7,7 @@ use App\Models\CallLog;
 use App\Models\FollowUp;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use App\Events\ContactUpdated;
 
 class ContactController extends Controller
 {
@@ -52,11 +53,33 @@ class ContactController extends Controller
         return response()->json(['success' => true, 'contact' => $contact], 201);
     }
 
-    public function show(Contact $contact): JsonResponse
+    public function show($id): JsonResponse
     {
-        $contact->load(['assignedUser', 'callLogs.user', 'followUps']);
-        $contact->loadCount(['callLogs', 'followUps']);
+        $contact = Contact::with([
+            'owner',
+            'callLogs.user',
+            'followUps'
+        ])
+            ->withCount(['callLogs', 'followUps'])
+            ->findOrFail($id);
+
         return response()->json($contact);
+    }
+
+    public function assign(Request $request, $id)
+    {
+        $request->validate([
+            'assigned_to' => 'required|exists:users,id'
+        ]);
+
+        $contact = Contact::findOrFail($id);
+
+        $contact->assigned_to = $request->assigned_to;
+        $contact->save();
+
+        return response()->json([
+            'message' => 'Lead assigned successfully'
+        ]);
     }
 
     public function update(Request $request, Contact $contact): JsonResponse

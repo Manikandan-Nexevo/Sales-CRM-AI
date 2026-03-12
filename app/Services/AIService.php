@@ -50,25 +50,48 @@ class AIService
         }
     }
 
-    public function generateCallSummary(string $notes, string $transcript, string $contactName, string $company): string
-    {
-        $company = $company ?: 'Nexevo';
+    public function generateCallSummary(
+        string $notes,
+        string $transcript,
+        string $contactName,
+        string $company,
+        string $outcome = '',
+        int $interest = 0,
+        string $sentiment = ''
+    ): string {
+
+        if (str_contains($notes, 'Key Points')) {
+            $notes = '';
+        }
+
+        if (empty($company)) {
+            $company = 'Company not provided';
+        }
+
+        Log::info("AI CALL SUMMARY INPUT", [
+            'contact' => $contactName,
+            'company' => $company,
+            'notes' => $notes
+        ]);
 
         $system = "
 You are an AI CRM assistant for Nexevo.
 
-Convert sales call notes into a structured CRM summary
-that sales representatives can quickly read.
+Summarize sales calls for CRM usage.
 
-Always follow the exact format requested.
-Do not add extra sections or explanations.
+Rules:
+- Start directly with 'Key Points'
+- No titles
+- Use '-' for bullet points
 ";
 
         $user = "
-Summarize the following sales call.
-
 Contact: {$contactName}
 Company: {$company}
+
+Outcome: {$outcome}
+Interest Level: {$interest}/5
+Sentiment: {$sentiment}
 
 Notes:
 {$notes}
@@ -76,55 +99,65 @@ Notes:
 Transcript:
 {$transcript}
 
-Return the summary in EXACTLY this structure:
+Return format:
 
 Key Points
-• point
-• point
+- point
+- point
 
 Client Interest
-• High / Medium / Low
+- High / Medium / Low
 
 Pain Points
-• point
-• point
+- point
+- point
 
 Recommended Next Steps
-• point
-• point
-
-Rules:
-- Maximum 120 words
-- Use bullet symbol •
-- One bullet per line
-- Do NOT include 'Sales Call Summary'
-- Do NOT include markdown
+- point
+- point
 ";
 
         try {
 
             $response = $this->chat($system, $user, 300);
 
-            // Remove markdown blocks
+            /* ------------------------------------
+           FIX UTF-8
+        ------------------------------------ */
+
+            $response = mb_convert_encoding($response, 'UTF-8', 'UTF-8');
+            $response = iconv('UTF-8', 'UTF-8//IGNORE', $response);
+
+            /* ------------------------------------
+           CLEAN RESPONSE
+        ------------------------------------ */
+
             $clean = preg_replace('/```.*?```/s', '', $response);
 
-            // Normalize bullet styles (-, *, • → •)
-            $clean = preg_replace('/[-*]\s*/', '• ', $clean);
+            // Normalize bullet styles
+            $clean = preg_replace('/^[\*\•]\s*/m', '- ', $clean);
 
-            // Ensure bullets start on new lines
-            $clean = preg_replace('/\s*•\s*/', "\n• ", $clean);
+            // Join wrapped lines inside bullets
+            $clean = preg_replace('/\n(?!- |Key Points|Client Interest|Pain Points|Recommended Next Steps)/', ' ', $clean);
+
+            // Ensure bullet begins new line
+            $clean = preg_replace('/(?<!\n)- /', "\n- ", $clean);
 
             // Remove empty bullets
-            $clean = preg_replace('/\n•\s*(?=\n|$)/', '', $clean);
+            $clean = preg_replace('/\n-\s*(?=\n|$)/', '', $clean);
 
-            // Normalize section spacing
-            $clean = preg_replace('/Key Points\s*/', "Key Points\n", $clean);
-            $clean = preg_replace('/Client Interest\s*/', "\nClient Interest\n", $clean);
-            $clean = preg_replace('/Pain Points\s*/', "\nPain Points\n", $clean);
-            $clean = preg_replace('/Recommended Next Steps\s*/', "\nRecommended Next Steps\n", $clean);
+            // Normalize section headers
+            $clean = preg_replace('/Key Points\s*/i', "Key Points\n", $clean);
+            $clean = preg_replace('/Client Interest\s*/i', "\nClient Interest\n", $clean);
+            $clean = preg_replace('/Pain Points\s*/i', "\nPain Points\n", $clean);
+            $clean = preg_replace('/Recommended Next Steps\s*/i', "\nRecommended Next Steps\n", $clean);
 
-            // Remove excessive line breaks
+            // Remove extra spacing
             $clean = preg_replace("/\n{3,}/", "\n\n", $clean);
+
+            Log::info("AI CALL SUMMARY OUTPUT", [
+                'summary' => $clean
+            ]);
 
             return trim($clean);
         } catch (\Exception $e) {
@@ -132,18 +165,18 @@ Rules:
             Log::error('AI Call Summary Error: ' . $e->getMessage());
 
             return "Key Points
-• {$contactName} discussed IT requirements
-• {$company} exploring services
+- Call completed with {$contactName}
+- Discussion with {$company}
 
 Client Interest
-• Medium
+- Medium
 
 Pain Points
-• Needs better IT solutions
+- No major pain points mentioned
 
 Recommended Next Steps
-• Schedule follow-up demo
-• Send service overview";
+- Schedule follow-up call
+- Share service details";
         }
     }
     public function analyzeLead(Contact $contact): array
@@ -213,6 +246,18 @@ Return ONLY valid JSON.";
         }
     }
 
+    private function contactQuery(User $user)
+    {
+        $query = Contact::query();
+
+        // Admin can see all contacts
+        if (!$user->can('admin')) {
+            $query->where('assigned_to', $user->id);
+        }
+
+        return $query;
+    }
+
     public function generateEmail(Contact $contact, string $purpose, string $tone = 'friendly'): array
     {
         $system = "You are a senior sales executive at Nexevo, an IT company specializing in web development and digital transformation.";
@@ -248,7 +293,7 @@ Return ONLY valid JSON.";
 
             $subject = "Following up - Nexevo";
 
-            MailHelper::sendMail($contact->email, $subject, $htmlBody, true);
+
 
             return [
                 'subject' => $subject,
@@ -345,7 +390,8 @@ Return ONLY valid JSON.";
             str_contains($cmd, 'high priority leads')
         ) {
 
-            $leads = Contact::where('priority', 'high')
+            $leads = $this->contactQuery($user)
+                ->where('priority', 'high')
                 ->take(5)
                 ->get();
 
@@ -378,7 +424,8 @@ Return ONLY valid JSON.";
             str_contains($cmd, 'highest scoring leads')
         ) {
 
-            $leads = Contact::orderByDesc('ai_score')
+            $leads = $this->contactQuery($user)
+                ->orderByDesc('ai_score')
                 ->take(3)
                 ->get();
 
@@ -415,9 +462,12 @@ Return ONLY valid JSON.";
             str_contains($cmd, 'not contacted')
         ) {
 
-            $leads = Contact::whereDoesntHave('callLogs', function ($q) {
-                $q->where('created_at', '>=', now()->subDays(7));
-            })->take(5)->get();
+            $leads = $this->contactQuery($user)
+                ->whereDoesntHave('callLogs', function ($q) {
+                    $q->where('created_at', '>=', now()->subDays(7));
+                })
+                ->take(5)
+                ->get();
 
             if ($leads->isEmpty()) {
                 return [
@@ -479,7 +529,8 @@ Return ONLY valid JSON.";
             str_contains($cmd, 'at risk')
         ) {
 
-            $leads = Contact::whereNotIn('status', ['closed_won', 'closed_lost'])
+            $leads = $this->contactQuery($user)
+                ->whereNotIn('status', ['closed_won', 'closed_lost'])
                 ->get()
                 ->filter(function ($lead) {
 
@@ -570,10 +621,18 @@ Return ONLY valid JSON.";
             }
 
             if ($data['top_rep']) {
-                $response .= "\n\nTop performer today is {$data['top_rep']} with {$data['top_rep_calls']} calls.";
+                if (!empty($data['top_rep'])) {
+                    $response .= "\n\nTop performer this week is {$data['top_rep']} with {$data['top_rep_score']} activities.";
+                }
             }
 
-            $response .= "\n\nI recommend starting with your hot leads.";
+            if ($data['hot_leads'] > 0) {
+                $response .= "\n\nFocus on your hot leads first.";
+            } elseif ($data['followups_today'] > 0) {
+                $response .= "\n\nStart with your scheduled follow-ups.";
+            } else {
+                $response .= "\n\nConsider reaching out to new prospects.";
+            }
 
             return [
                 'action' => 'daily_briefing',
@@ -615,7 +674,7 @@ Return ONLY valid JSON.";
             str_contains($cmd, 'closing chance')
         ) {
 
-            $lead = $this->getNextBestLead();
+            $lead = $this->getNextBestLead($user);
 
             if (!$lead) {
                 return [
@@ -666,7 +725,7 @@ Return ONLY valid JSON.";
             str_contains($cmd, 'next call')
         ) {
 
-            $lead = $this->getNextBestLead();
+            $lead = $this->getNextBestLead($user);
 
             if (!$lead) {
                 return [
@@ -948,10 +1007,13 @@ Nexevo Sales Team";
 
         return $this->chat($system, $user, 300);
     }
-    private function getNextBestLead()
+    private function getNextBestLead(User $user)
     {
-        $lead = Contact::whereNotIn('status', ['closed_won', 'closed_lost'])
-            ->withMax('callLogs', 'created_at')
+        $query = $this->contactQuery($user)
+            ->whereNotIn('status', ['closed_won', 'closed_lost'])
+            ->withMax('callLogs', 'created_at');
+
+        $lead = $query
             ->orderByRaw("
             CASE status
                 WHEN 'proposal' THEN 5
@@ -970,8 +1032,7 @@ Nexevo Sales Team";
         }
 
         if ($lead->call_logs_max_created_at) {
-            $lead->last_contact_days = now()
-                ->diffInDays($lead->call_logs_max_created_at);
+            $lead->last_contact_days = now()->diffInDays($lead->call_logs_max_created_at);
         }
 
         return $lead;
@@ -1097,18 +1158,52 @@ Nexevo Sales Team";
             ->whereDate('created_at', $today)
             ->count();
 
-        $hotLeads = Contact::where('priority', 'high')->count();
+        $query = Contact::whereIn('status', ['interested', 'qualified', 'hot', 'proposal']);
 
-        $inactiveLeads = Contact::whereDoesntHave('callLogs', function ($q) {
-            $q->where('created_at', '>=', now()->subDays(7));
-        })->count();
+        if (!$user->can('admin')) {
+            $query->where('assigned_to', $user->id);
+        }
 
+        $hotLeads = $query->count();
+
+        $query = Contact::where('created_at', '<=', now()->subDays(7))
+            ->whereDoesntHave('callLogs', function ($q) {
+                $q->where('created_at', '>=', now()->subDays(7));
+            });
+
+        if (!$user->can('admin')) {
+            $query->where('assigned_to', $user->id);
+        }
+
+        $inactiveLeads = $query->count();
         // Team stats
-        $topRep = User::withCount(['callLogs' => function ($q) {
-            $q->whereDate('created_at', today());
-        }])
-            ->orderByDesc('call_logs_count')
-            ->first();
+        // Team performance (last 7 days)
+
+        $topRep = null;
+        $topScore = 0;
+
+        $users = User::withCount([
+            'callLogs as calls_week' => function ($q) {
+                $q->where('created_at', '>=', now()->subDays(7));
+            },
+            'followUps as followups_week' => function ($q) {
+                $q->where('created_at', '>=', now()->subDays(7));
+            }
+        ])->get();
+
+        foreach ($users as $u) {
+
+            $score = $u->calls_week + $u->followups_week;
+
+            if ($score > $topScore) {
+                $topScore = $score;
+                $topRep = $u;
+            }
+        }
+
+        if ($topScore === 0) {
+            $topRep = null;
+        }
 
         return [
             'followups_today' => $followupsToday,
@@ -1117,7 +1212,7 @@ Nexevo Sales Team";
             'hot_leads' => $hotLeads,
             'inactive_leads' => $inactiveLeads,
             'top_rep' => $topRep?->name,
-            'top_rep_calls' => $topRep?->call_logs_count
+            'top_rep_score' => $topScore
         ];
     }
 

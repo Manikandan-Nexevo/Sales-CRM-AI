@@ -64,6 +64,8 @@ class Contact extends Model
         return $query->where('status', $status);
     }
 
+
+
     public function scopeSearch($query, $term)
     {
         return $query->where(function ($q) use ($term) {
@@ -72,5 +74,10 @@ class Contact extends Model
                 ->orWhere('email', 'LIKE', "%{$term}%")
                 ->orWhere('phone', 'LIKE', "%{$term}%");
         });
+    }
+
+    public function owner()
+    {
+        return $this->belongsTo(User::class, 'assigned_to');
     }
 }

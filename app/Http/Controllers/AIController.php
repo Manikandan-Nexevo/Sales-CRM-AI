@@ -6,6 +6,7 @@ use App\Models\Contact;
 use App\Services\AIService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use App\Helpers\MailHelper;
 
 class AIController extends Controller
 {
@@ -23,31 +24,32 @@ class AIController extends Controller
 
     public function analyzeLead(Request $request): JsonResponse
     {
-        $request->validate(['contact_id' => 'required|exists:contacts,id']);
+        $request->validate([
+            'contact_id' => 'required|exists:contacts,id'
+        ]);
 
-        $contact = Contact::with(['callLogs', 'followUps'])->find($request->contact_id);
+        $contact = Contact::with([
+            'callLogs' => fn($q) => $q->latest()->limit(10),
+            'followUps' => fn($q) => $q->latest()->limit(10)
+        ])->findOrFail($request->contact_id);
+
         $analysis = $this->aiService->analyzeLead($contact);
 
         $contact->update([
             'ai_score' => $analysis['score'] ?? 0,
+            'ai_analysis' => $analysis
         ]);
 
-        return response()->json(['analysis' => $analysis]);
-    }
-
-    public function generateEmail(Request $request): JsonResponse
-    {
-        $request->validate([
-            'contact_id' => 'required|exists:contacts,id',
-            'purpose' => 'required|string',
-            'tone' => 'nullable|in:formal,friendly,urgent',
+        return response()->json([
+            'analysis' => $analysis
         ]);
-
-        $contact = Contact::find($request->contact_id);
-        $email = $this->aiService->generateEmail($contact, $request->purpose, $request->tone ?? 'friendly');
-
-        return response()->json(['email' => $email]);
     }
+
+
+
+
+
+
 
     public function callSummary(Request $request): JsonResponse
     {
@@ -81,6 +83,75 @@ class AIController extends Controller
 
         $action = $this->aiService->suggestNextAction($contact);
         return response()->json(['action' => $action]);
+    }
+
+    public function generateEmail(Request $request)
+    {
+        $request->validate([
+            'contact_id' => 'required|exists:contacts,id',
+            'purpose' => 'required|string',
+            'tone' => 'nullable|string'
+        ]);
+
+        $contact = Contact::findOrFail($request->contact_id);
+
+        $tone = $request->tone ?? 'friendly';
+
+        $email = $this->aiService->generateEmail(
+            $contact,
+            $request->purpose,
+            $tone
+        );
+
+        return response()->json([
+            'email' => $email
+        ]);
+    }
+
+    public function sendGeneratedEmail(Request $request): JsonResponse
+    {
+        $request->validate([
+            'contact_id' => 'required|exists:contacts,id',
+            'subject' => 'required|string',
+            'body' => 'required|string',
+            'attachments.*' => 'file|max:20480'
+        ]);
+
+        $contact = Contact::findOrFail($request->contact_id);
+
+        $html = nl2br(e($request->body));
+
+        $attachments = [];
+
+        if ($request->hasFile('attachments')) {
+
+            foreach ($request->file('attachments') as $file) {
+
+                $originalName = $file->getClientOriginalName();
+
+                $path = $file->storeAs(
+                    'email_attachments',
+                    $originalName
+                );
+
+                $attachments[] = [
+                    'path' => storage_path('app/' . $path),
+                    'name' => $originalName
+                ];
+            }
+        }
+
+        MailHelper::sendMail(
+            $contact->email,
+            $request->subject,
+            $html,
+            true,
+            $attachments
+        );
+
+        return response()->json([
+            'message' => 'Email sent successfully'
+        ]);
     }
 
     public function processVoiceCommand(Request $request): JsonResponse

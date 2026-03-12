@@ -43,6 +43,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/contacts/{contact}/linkedin', [ContactController::class, 'saveLinkedIn']);
     Route::put('/contacts/{contact}/status', [ContactController::class, 'updateStatus']);
     Route::get('/contacts/{contact}/timeline', [ContactController::class, 'timeline']);
+    Route::patch('/contacts/{id}/assign', [ContactController::class, 'assign']);
 
     // Call Logs
     Route::apiResource('calls', CallLogController::class);
@@ -83,10 +84,15 @@ Route::middleware('auth:sanctum')->group(function () {
     });
 });
 
-
+Route::post('/ai/send-generated-email', [AIController::class, 'sendGeneratedEmail']);
 Route::post('/send-whatsapp', [WhatsappController::class, 'sendWhatsappMessage']);
 
 Route::get('/whatsapp/webhook',  [WhatsappController::class, 'verify']);
 Route::post('/whatsapp/webhook', [WhatsappController::class, 'webhook']);
 
 Route::get('/list-messages',  [WhatsappController::class, 'listmessages']);
+Route::get('/users', [UserController::class, 'users']);
+
+Route::get('/dashboard/pipeline', [DashboardController::class, 'pipeline']);
+Route::get('/dashboard/leaderboard', [DashboardController::class, 'leaderboard']);
+Route::get('/dashboard/ai-insights', [DashboardController::class, 'aiInsights']);

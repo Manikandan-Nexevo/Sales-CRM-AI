@@ -79,4 +79,9 @@ class UserController extends Controller
         $connected = CallLog::where('user_id', $userId)->where('status', 'connected')->count();
         return $total > 0 ? round(($connected / $total) * 100, 1) : 0;
     }
+
+    public function users()
+    {
+        return User::select('id', 'name')->get();
+    }
 }

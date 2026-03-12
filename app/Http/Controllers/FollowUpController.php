@@ -34,10 +34,13 @@ class FollowUpController extends Controller
             $query->whereDate('scheduled_at', $request->date);
         }
 
-        $followups = $query->with(['contact', 'callLog', 'user'])
+        $followups = $query->with([
+            'contact:id,name,company,priority,ai_score,ai_analysis,last_contacted_at,next_followup_at',
+            'callLog',
+            'user:id,name,role'
+        ])
             ->latest()
             ->paginate($request->per_page ?? 20);
-
         return response()->json($followups);
     }
 
@@ -105,9 +108,17 @@ class FollowUpController extends Controller
     public function dueToday(Request $request): JsonResponse
     {
         $user = $request->user();
-        $followups = FollowUp::where('user_id', $user->id)
+
+        $query = $user->isAdmin()
+            ? FollowUp::query()
+            : FollowUp::where('user_id', $user->id);
+
+        $followups = $query
             ->dueToday()
-            ->with('contact')
+            ->with([
+                'contact:id,name,company,priority,ai_score,ai_analysis,last_contacted_at,next_followup_at',
+                'user:id,name,role'
+            ])
             ->orderBy('scheduled_at')
             ->get();
 
