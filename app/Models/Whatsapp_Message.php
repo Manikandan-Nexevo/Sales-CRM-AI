@@ -15,7 +15,6 @@ class Whatsapp_Message extends Model
         'name',
         'phone',
         'message',
-        'type',
         'direction',
         'media_path',
         'message_type',

@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Contact;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Http;
 use App\Models\Whatsapp_Message;
@@ -15,13 +16,12 @@ class WhatsappController extends Controller
         $message = $request->message;
         $file = $request->file('file');
 
-        $token = "EAANdHdaGSd4BQ6MONZAqP9ZAgYuhsU1V2eSAOGM1zaVm8HgbYXHF5FZBd0di9VbuZB8XRRYWT5fqR1ocuZAJ8SISNB9c3sqGtO4QzkrtgC510VHVIwe6mvqbN3PhlxN4Pncwg7z40BUMF0SKmQpcJG19twL42bb5LGSactztAjSoRvFDtix1dMdtjFEzOUQZDZD";
+        $token = "EAANdHdaGSd4BQyc0TMmZBGSymXDuYfRkZBZBvZC5KFcq5duGPuADza3YltryYkN6455BAxsO6vEpbsjRLTIZBl0BKd1ZC08CuLxLlAr2fNZCc5OJWkEZAM3g76Q2KhXy386XPaGQpTPalrqcY7H5yNI1t8WJCHHRe1dpA2I9tBQTGmE1oVSJVLW6cgTRUdyirCJx3AZDZD";
         $phoneId = "1018982427962414";
 
         $type = 'text';
         $mediaPath = null;
 
-        // TEXT MESSAGE
         if (!$file) {
 
             $response = Http::withToken($token)
@@ -33,10 +33,7 @@ class WhatsappController extends Controller
                         "body" => $message
                     ]
                 ]);
-        }
-
-        // FILE MESSAGE
-        else {
+        } else {
 
             $extension = strtolower($file->getClientOriginalExtension());
 
@@ -46,7 +43,6 @@ class WhatsappController extends Controller
 
             $mediaPath = $path;
 
-            // Detect type
             if (in_array($extension, ['jpg', 'jpeg', 'png', 'gif', 'webp'])) {
                 $type = 'image';
             } elseif (in_array($extension, ['mp4', 'mov', 'avi'])) {
@@ -69,7 +65,6 @@ class WhatsappController extends Controller
                 ]);
             $uploadData = $upload->json();
 
-            // Check upload success
             if (!$upload->successful() || !isset($uploadData['id'])) {
 
                 return response()->json([
@@ -81,7 +76,6 @@ class WhatsappController extends Controller
 
             $mediaId = $uploadData['id'];
 
-            // Send media message
             $response = Http::withToken($token)
                 ->post("https://graph.facebook.com/v22.0/$phoneId/messages", [
                     "messaging_product" => "whatsapp",
@@ -93,8 +87,10 @@ class WhatsappController extends Controller
                 ]);
         }
 
-        // Save message
+        $getcontact = Contact::where('phone', $phone)->first();
+
         $whatsapp = Whatsapp_Message::create([
+            'name' => $getcontact->name,
             'phone' => $phone,
             'message' => $message,
             'media_path' => $mediaPath,
@@ -157,7 +153,10 @@ class WhatsappController extends Controller
             $mediaPath = $this->downloadMedia($mediaId);
         }
 
+        $getcontact = Contact::where('phone', $phone)->first();
+
         Whatsapp_Message::create([
+            'name' => $getcontact->name,
             'phone' => $phone,
             'message' => $text,
             'media_path' => $mediaPath,

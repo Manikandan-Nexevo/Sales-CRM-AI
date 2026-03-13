@@ -36,6 +36,7 @@ class ContactController extends Controller
             'name' => 'required|string|max:255',
             'company' => 'required|string|max:255',
             'phone' => 'required|string|max:20',
+            'phone_alt' => 'nullable|string|max:20',
             'email' => 'nullable|email|max:255',
             'designation' => 'nullable|string|max:255',
             'linkedin_url' => 'nullable|url|max:500',
@@ -45,12 +46,33 @@ class ContactController extends Controller
             'priority' => 'nullable|in:low,medium,high',
         ]);
 
+        $formatPhone = function ($phone) {
+            if (!$phone) return null;
+
+            $phone = str_replace([' ', '+'], '', $phone);
+
+            $phone = ltrim($phone, '0');
+            if (!str_starts_with($phone, '91')) {
+                $phone = '91' . $phone;
+            }
+
+            return $phone;
+        };
+
+        $data = $request->all();
+
+        $data['phone'] = $formatPhone($request->phone);
+        $data['phone_alt'] = $formatPhone($request->phone_alt);
+
         $contact = Contact::create([
-            ...$request->all(),
+            ...$data,
             'assigned_to' => $request->assigned_to ?? $request->user()->id,
         ]);
 
-        return response()->json(['success' => true, 'contact' => $contact], 201);
+        return response()->json([
+            'success' => true,
+            'contact' => $contact
+        ], 201);
     }
 
     public function show($id): JsonResponse
