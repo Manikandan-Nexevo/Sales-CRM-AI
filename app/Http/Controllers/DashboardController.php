@@ -188,6 +188,100 @@ class DashboardController extends Controller
             ->toArray();
     }
 
+    public function teamStats()
+    {
+        $users = User::where('role', 'sales_rep')->get();
+
+        $team = $users->map(function ($user) {
+
+            $todayCalls = CallLog::where('user_id', $user->id)
+                ->whereDate('created_at', today())
+                ->count();
+
+            $totalCalls = CallLog::where('user_id', $user->id)
+                ->where('created_at', '>=', now()->subDays(7))
+                ->count();
+
+            $followups = FollowUp::where('user_id', $user->id)
+                ->where('created_at', '>=', now()->subDays(7))
+                ->count();
+
+            $leads = Contact::where('assigned_to', $user->id)->count();
+
+            $target = $user->target_calls_daily ?? 50;
+
+            $engagementScore =
+                ($totalCalls * 1) +
+                ($followups * 2) +
+                ($leads * 0.5);
+
+            return [
+                'id' => $user->id,
+                'name' => $user->name,
+                'email' => $user->email,
+
+                'today_calls' => $todayCalls,
+                'total_calls' => $totalCalls,
+                'total_leads' => $leads,
+
+                'target' => $target,
+
+                'progress' => $target > 0
+                    ? round(($todayCalls / $target) * 100)
+                    : 0,
+
+                'engagement_score' => round($engagementScore)
+            ];
+        });
+
+        return response()->json($team);
+    }
+
+    public function teamAnalytics(): JsonResponse
+    {
+        $users = User::where('role', 'sales_rep')->get();
+
+        $data = $users->map(function ($user) {
+
+            $calls7 = CallLog::where('user_id', $user->id)
+                ->where('created_at', '>=', now()->subDays(7))
+                ->count();
+
+            $todayCalls = CallLog::where('user_id', $user->id)
+                ->whereDate('created_at', today())
+                ->count();
+
+            $connected = CallLog::where('user_id', $user->id)
+                ->where('status', 'connected')
+                ->where('created_at', '>=', now()->subDays(7))
+                ->count();
+
+            $followups = FollowUp::where('user_id', $user->id)
+                ->where('created_at', '>=', now()->subDays(7))
+                ->count();
+
+            $leads = Contact::where('assigned_to', $user->id)->count();
+
+            $score =
+                ($calls7 * 1) +
+                ($connected * 2) +
+                ($followups * 1.5);
+
+            return [
+                'id' => $user->id,
+                'name' => $user->name,
+                'calls_7_days' => $calls7,
+                'today_calls' => $todayCalls,
+                'connected' => $connected,
+                'followups' => $followups,
+                'leads' => $leads,
+                'productivity_score' => round($score),
+            ];
+        });
+
+        return response()->json($data);
+    }
+
     private function getLeaderboard(): array
     {
         return User::where('role', 'sales_rep')

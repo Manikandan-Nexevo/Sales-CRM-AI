@@ -96,3 +96,4 @@ Route::get('/users', [UserController::class, 'users']);
 Route::get('/dashboard/pipeline', [DashboardController::class, 'pipeline']);
 Route::get('/dashboard/leaderboard', [DashboardController::class, 'leaderboard']);
 Route::get('/dashboard/ai-insights', [DashboardController::class, 'aiInsights']);
+Route::get('/dashboard/team-analytics', [DashboardController::class, 'teamAnalytics']);
