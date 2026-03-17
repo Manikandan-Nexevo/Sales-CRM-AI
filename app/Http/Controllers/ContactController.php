@@ -35,9 +35,9 @@ class ContactController extends Controller
         $request->validate([
             'name' => 'required|string|max:255',
             'company' => 'required|string|max:255',
-            'phone' => 'required|string|max:20',
+            'phone' => 'required|string|max:20|unique:contacts,phone',
             'phone_alt' => 'nullable|string|max:20',
-            'email' => 'nullable|email|max:255',
+            'email' => 'nullable|email|max:255|unique:contacts,email',
             'designation' => 'nullable|string|max:255',
             'linkedin_url' => 'nullable|url|max:500',
             'industry' => 'nullable|string|max:100',

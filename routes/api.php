@@ -76,6 +76,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/export/contacts', [ExportController::class, 'contacts']);
     Route::get('/export/calls', [ExportController::class, 'calls']);
     Route::get('/export/report', [ExportController::class, 'fullReport']);
+    Route::post('/contacts/import', [ExportController::class, 'import']);
 
     // Team Management (Admin)
     Route::middleware('can:admin')->group(function () {

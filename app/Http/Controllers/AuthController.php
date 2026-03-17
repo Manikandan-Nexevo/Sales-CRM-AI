@@ -88,9 +88,9 @@ class AuthController extends Controller
 
         $request->validate([
             'name' => 'sometimes|string|max:255',
-            'phone' => 'sometimes|string|max:20',
-            'target_calls_daily' => 'sometimes|integer|min:1',
-            'target_leads_monthly' => 'sometimes|integer|min:1',
+            'phone' => 'nullable|string|max:20',
+            'target_calls_daily' => 'nullable|integer|min:1',
+            'target_leads_monthly' => 'nullable|integer|min:1',
         ]);
 
         $user->update($request->only(['name', 'phone', 'target_calls_daily', 'target_leads_monthly']));
