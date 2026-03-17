@@ -6,11 +6,13 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
-use App\Models\FollowUp;
+use App\Models\Company;
 
 class User extends Authenticatable
 {
     use HasApiTokens, HasFactory, Notifiable;
+
+    // ✅ IMPORTANT: Keep user in MAIN DB (do NOT set tenant connection here)
 
     protected $fillable = [
         'name',
@@ -21,10 +23,14 @@ class User extends Authenticatable
         'avatar',
         'target_calls_daily',
         'target_leads_monthly',
-        'is_active'
+        'is_active',
+        'company_id' // ✅ VERY IMPORTANT
     ];
 
-    protected $hidden = ['password', 'remember_token'];
+    protected $hidden = [
+        'password',
+        'remember_token'
+    ];
 
     protected $casts = [
         'email_verified_at' => 'datetime',
@@ -34,6 +40,19 @@ class User extends Authenticatable
         'target_leads_monthly' => 'integer',
     ];
 
+    /*
+    |--------------------------------------------------------------------------
+    | RELATIONSHIPS
+    |--------------------------------------------------------------------------
+    */
+
+    // ✅ Link user → company (used for tenant DB switching)
+    public function company()
+    {
+        return $this->belongsTo(Company::class);
+    }
+
+    // These models should extend TenantModel (tenant DB)
     public function callLogs()
     {
         return $this->hasMany(CallLog::class);
@@ -49,6 +68,12 @@ class User extends Authenticatable
         return $this->hasMany(FollowUp::class);
     }
 
+    /*
+    |--------------------------------------------------------------------------
+    | HELPERS
+    |--------------------------------------------------------------------------
+    */
+
     public function isAdmin(): bool
     {
         return $this->role === 'admin';
@@ -56,6 +81,8 @@ class User extends Authenticatable
 
     public function todayCallCount(): int
     {
-        return $this->callLogs()->whereDate('created_at', today())->count();
+        return $this->callLogs()
+            ->whereDate('created_at', today())
+            ->count();
     }
 }

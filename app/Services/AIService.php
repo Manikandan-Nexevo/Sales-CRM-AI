@@ -14,11 +14,67 @@ class AIService
     private string $model = 'llama-3.1-8b-instant';
     private string $apiUrl = 'https://api.groq.com/openai/v1/chat/completions';
 
+    private string $provider;
+
     public function __construct()
     {
-        $this->apiKey = config('groqai.api_key', env('GROQ_API_KEY', ''));
+        $company = auth()->user()?->company;
+
+        // ✅ Resolve provider based on PLAN (not directly from DB)
+        $this->provider = $this->resolveProviderFromPlan($company);
+
+        // ✅ Set API key dynamically
+        $this->apiKey = $company && $company->ai_api_key
+            ? decrypt($company->ai_api_key)
+            : $this->getDefaultApiKey();
+
+        // ✅ Set API URL + model
+        $this->setProviderConfig();
     }
 
+    private function resolveProviderFromPlan($company): string
+    {
+        if (!$company) {
+            return 'groq';
+        }
+
+        return match ($company->plan) {
+            'basic' => 'groq',          // free
+            'growth' => 'gemini',       // better quality
+            'pro' => 'openrouter',      // multiple models
+            'enterprise' => $company->ai_provider ?? 'groq', // custom
+            default => 'groq',
+        };
+    }
+
+    private function getDefaultApiKey(): string
+    {
+        return match ($this->provider) {
+            'gemini' => env('GEMINI_API_KEY'),
+            'openrouter' => env('OPENROUTER_API_KEY'),
+            default => env('GROQ_API_KEY'),
+        };
+    }
+
+    private function setProviderConfig()
+    {
+        switch ($this->provider) {
+
+            case 'gemini':
+                $this->apiUrl = 'https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent';
+                $this->model = 'gemini-1.5-flash';
+                break;
+
+            case 'openrouter':
+                $this->apiUrl = 'https://openrouter.ai/api/v1/chat/completions';
+                $this->model = 'mistral:free';
+                break;
+
+            default: // groq
+                $this->apiUrl = 'https://api.groq.com/openai/v1/chat/completions';
+                $this->model = 'llama-3.1-8b-instant';
+        }
+    }
     private function chat(string $systemPrompt, string $userMessage, int $maxTokens = 500): string
     {
         if (empty($this->apiKey)) {

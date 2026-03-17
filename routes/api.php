@@ -26,6 +26,8 @@ Route::prefix('auth')->group(function () {
 // Protected routes
 Route::middleware('auth:sanctum')->group(function () {
 
+    Route::get('/users', [UserController::class, 'users']);
+
     // Auth
     Route::post('/auth/logout', [AuthController::class, 'logout']);
     Route::get('/auth/me', [AuthController::class, 'me']);
@@ -92,7 +94,7 @@ Route::get('/whatsapp/webhook',  [WhatsappController::class, 'verify']);
 Route::post('/whatsapp/webhook', [WhatsappController::class, 'webhook']);
 
 Route::get('/list-messages',  [WhatsappController::class, 'listmessages']);
-Route::get('/users', [UserController::class, 'users']);
+
 
 Route::get('/dashboard/pipeline', [DashboardController::class, 'pipeline']);
 Route::get('/dashboard/leaderboard', [DashboardController::class, 'leaderboard']);

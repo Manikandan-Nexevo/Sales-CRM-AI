@@ -4,15 +4,25 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use App\Models\TenantModel;
 
-class FollowUp extends Model
+class FollowUp extends TenantModel
 {
     use HasFactory;
 
     protected $fillable = [
-        'user_id', 'contact_id', 'call_log_id', 'type', 'subject',
-        'message', 'scheduled_at', 'completed_at', 'status',
-        'ai_generated', 'email_sent', 'whatsapp_sent'
+        'user_id',
+        'contact_id',
+        'call_log_id',
+        'type',
+        'subject',
+        'message',
+        'scheduled_at',
+        'completed_at',
+        'status',
+        'ai_generated',
+        'email_sent',
+        'whatsapp_sent'
     ];
 
     protected $casts = [
@@ -41,7 +51,7 @@ class FollowUp extends Model
     public function scopeDueToday($query)
     {
         return $query->whereDate('scheduled_at', today())
-                     ->where('status', 'pending');
+            ->where('status', 'pending');
     }
 
     public function scopePending($query)

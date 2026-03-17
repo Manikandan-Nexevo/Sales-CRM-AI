@@ -4,16 +4,30 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use App\Models\TenantModel;
 
-class CallLog extends Model
+class CallLog extends TenantModel
 {
     use HasFactory;
 
     protected $fillable = [
-        'user_id', 'contact_id', 'direction', 'duration', 'status',
-        'outcome', 'notes', 'ai_summary', 'voice_transcript',
-        'next_action', 'next_action_date', 'call_recording_url',
-        'sentiment', 'interest_level', 'scheduled_at', 'answered_at', 'ended_at'
+        'user_id',
+        'contact_id',
+        'direction',
+        'duration',
+        'status',
+        'outcome',
+        'notes',
+        'ai_summary',
+        'voice_transcript',
+        'next_action',
+        'next_action_date',
+        'call_recording_url',
+        'sentiment',
+        'interest_level',
+        'scheduled_at',
+        'answered_at',
+        'ended_at'
     ];
 
     protected $casts = [

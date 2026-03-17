@@ -12,9 +12,14 @@ class UserController extends Controller
 {
     public function index(): JsonResponse
     {
-        $users = User::withCount(['callLogs as today_calls' => function ($q) {
-            $q->whereDate('created_at', today());
-        }])->withCount('contacts as total_contacts')->get();
+        $companyId = auth()->user()->company_id;
+
+        $users = User::where('company_id', $companyId)
+            ->withCount(['callLogs as today_calls' => function ($q) {
+                $q->whereDate('created_at', today());
+            }])
+            ->withCount('contacts as total_contacts')
+            ->get();
 
         return response()->json($users);
     }
@@ -33,6 +38,7 @@ class UserController extends Controller
             'email' => $request->email,
             'password' => Hash::make($request->password),
             'role' => $request->role,
+            'company_id' => auth()->user()->company_id, // 🔥 CRITICAL
             'target_calls_daily' => $request->target_calls_daily ?? 50,
             'target_leads_monthly' => $request->target_leads_monthly ?? 10,
             'is_active' => true,
@@ -82,6 +88,9 @@ class UserController extends Controller
 
     public function users()
     {
-        return User::select('id', 'name')->get();
+        return User::where('company_id', auth()->user()->company_id)
+            ->where('is_active', true)
+            ->select('id', 'name')
+            ->get();
     }
 }
