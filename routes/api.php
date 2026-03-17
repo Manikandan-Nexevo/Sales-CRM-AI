@@ -35,7 +35,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Dashboard
     Route::get('/dashboard', [DashboardController::class, 'index']);
-    Route::get('/dashboard/kpis', [DashboardController::class, 'kpis']);
+    Route::get('/dashboard/kpis', [DashboardController::class, 'index']);
     Route::get('/dashboard/team', [DashboardController::class, 'teamStats']);
     Route::get('/dashboard/activity', [DashboardController::class, 'recentActivity']);
 

@@ -35,12 +35,12 @@ class FollowUp extends TenantModel
 
     public function user()
     {
-        return $this->belongsTo(User::class);
+        return $this->belongsTo(User::class, 'user_id');
     }
 
     public function contact()
     {
-        return $this->belongsTo(Contact::class);
+        return $this->belongsTo(Contact::class, 'contact_id');
     }
 
     public function callLog()

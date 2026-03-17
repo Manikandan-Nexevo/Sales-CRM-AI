@@ -7,6 +7,7 @@ use App\Models\Contact;
 use App\Models\User;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 use Maatwebsite\Excel\Concerns\ToCollection;
 
@@ -25,11 +26,21 @@ class ContactsImport implements ToCollection
                 continue;
             }
 
-            $name = $row[0] ?? '-';
+            // 🔍 DEBUG LOG (check laravel.log)
+            Log::info('IMPORT ROW', ['row' => $row->toArray()]);
+
+            $name = trim($row[0] ?? '-');
             $phone = $this->formatPhone($row[4] ?? null);
             $phoneAlt = $this->formatPhone($row[5] ?? null);
-            $email = $row[6] ?? null;
-            $assignedName = $row[14] ?? null;
+            $email = trim($row[6] ?? null);
+
+            // 🔥 FIX: Handle index shift safely
+            $assignedName = trim($row[14] ?? $row[15] ?? '');
+
+            Log::info('ASSIGNED NAME DEBUG', [
+                'row' => $index + 2,
+                'assignedName' => $assignedName
+            ]);
 
             $rowErrors = [];
 
@@ -56,11 +67,21 @@ class ContactsImport implements ToCollection
                 $rowErrors[] = "Email already exists";
             }
 
+            // Default fallback → current user
             $userId = Auth::id();
 
-            if ($assignedName) {
+            // 🔥 FIXED USER MATCHING
+            if (!empty($assignedName)) {
 
-                $user = User::whereRaw("LOWER(name) = ?", [strtolower($assignedName)])->first();
+                $user = User::whereRaw(
+                    "LOWER(TRIM(name)) = ?",
+                    [strtolower(trim($assignedName))]
+                )->first();
+
+                Log::info('USER MATCH RESULT', [
+                    'assignedName' => $assignedName,
+                    'user_found' => $user?->id
+                ]);
 
                 if ($user) {
                     $userId = $user->id;
@@ -69,7 +90,7 @@ class ContactsImport implements ToCollection
                 }
             }
 
-            // If row has errors store them
+            // If row has errors
             if (count($rowErrors)) {
 
                 $this->errors[] = [
@@ -83,7 +104,7 @@ class ContactsImport implements ToCollection
                 continue;
             }
 
-            // Save valid row temporarily
+            // Save valid row
             $this->validRows[] = [
                 'name' => $name,
                 'designation' => $row[1] ?? null,
@@ -105,7 +126,6 @@ class ContactsImport implements ToCollection
 
         // Stop import if any errors
         if (count($this->errors)) {
-
             $this->sendErrorMail();
             return;
         }
@@ -154,7 +174,6 @@ class ContactsImport implements ToCollection
                     </tr>";
 
         foreach ($this->errors as $error) {
-
             $body .= "<tr>
                         <td>{$error['row']}</td>
                         <td>{$error['name']}</td>

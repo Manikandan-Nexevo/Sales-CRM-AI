@@ -13,7 +13,7 @@ class User extends Authenticatable
     use HasApiTokens, HasFactory, Notifiable;
 
     // ✅ IMPORTANT: Keep user in MAIN DB (do NOT set tenant connection here)
-
+    protected $connection = 'mysql';
     protected $fillable = [
         'name',
         'email',

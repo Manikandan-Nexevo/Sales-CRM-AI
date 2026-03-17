@@ -47,7 +47,7 @@ class Contact extends TenantModel
 
     public function assignedUser()
     {
-        return $this->belongsTo(User::class, 'assigned_to');
+        return $this->belongsTo(User::class, 'assigned_to', 'id');
     }
 
     public function callLogs()
@@ -75,10 +75,5 @@ class Contact extends TenantModel
                 ->orWhere('email', 'LIKE', "%{$term}%")
                 ->orWhere('phone', 'LIKE', "%{$term}%");
         });
-    }
-
-    public function owner()
-    {
-        return $this->belongsTo(User::class, 'assigned_to');
     }
 }

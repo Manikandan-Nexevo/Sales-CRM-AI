@@ -78,7 +78,7 @@ class ContactController extends Controller
     public function show($id): JsonResponse
     {
         $contact = Contact::with([
-            'owner',
+            'assignedUser',
             'callLogs.user',
             'followUps'
         ])
@@ -91,7 +91,7 @@ class ContactController extends Controller
     public function assign(Request $request, $id)
     {
         $request->validate([
-            'assigned_to' => 'required|exists:users,id'
+            'assigned_to' => 'required|exists:mysql.users,id'
         ]);
 
         $contact = Contact::findOrFail($id);
