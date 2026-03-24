@@ -8,6 +8,11 @@ class Company extends Model
 {
     protected $fillable = [
         'name',
+        'email',
+        'phone',
+        'address',
+        'website',
+        'logo',
         'db_host',
         'db_name',
         'db_username',
@@ -21,5 +26,24 @@ class Company extends Model
     public function users()
     {
         return $this->hasMany(User::class);
+    }
+    public function subscriptions()
+    {
+        return $this->hasMany(Subscription::class);
+    }
+    public function invoices()
+    {
+        return $this->hasMany(Invoice::class);
+    }
+    public function transactions()
+    {
+        return $this->hasMany(Transaction::class);
+    }
+
+    public function activeSubscription()
+    {
+        return $this->hasOne(Subscription::class)
+            ->where('status', 'active')
+            ->latest();
     }
 }
