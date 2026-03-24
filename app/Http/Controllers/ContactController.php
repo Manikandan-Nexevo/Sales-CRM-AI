@@ -8,6 +8,7 @@ use App\Models\FollowUp;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use App\Events\ContactUpdated;
+use App\Models\User;
 
 class ContactController extends Controller
 {
@@ -104,10 +105,16 @@ class ContactController extends Controller
         ]);
     }
 
-    public function update(Request $request, Contact $contact): JsonResponse
+    public function update(Request $request, $id): JsonResponse
     {
+        $contact = Contact::findOrFail($id);
+
         $contact->update($request->all());
-        return response()->json(['success' => true, 'contact' => $contact]);
+
+        return response()->json([
+            'success' => true,
+            'contact' => $contact
+        ]);
     }
 
     public function destroy(Contact $contact): JsonResponse
@@ -143,19 +150,61 @@ class ContactController extends Controller
         return response()->json(['success' => true, 'contact' => $contact]);
     }
 
-    public function timeline(Contact $contact): JsonResponse
+
+
+    public function timeline($id): JsonResponse
     {
-        $calls = CallLog::where('contact_id', $contact->id)->with('user')->latest()->get();
-        $followups = FollowUp::where('contact_id', $contact->id)->with('user')->latest()->get();
+        $contact = Contact::findOrFail($id);
 
-        $timeline = collect();
-        foreach ($calls as $call) {
-            $timeline->push(['type' => 'call', 'data' => $call, 'date' => $call->created_at]);
-        }
-        foreach ($followups as $fu) {
-            $timeline->push(['type' => 'followup', 'data' => $fu, 'date' => $fu->created_at]);
-        }
+        $calls = CallLog::where('contact_id', $contact->id)->get();
+        $followups = FollowUp::where('contact_id', $contact->id)->get();
 
-        return response()->json($timeline->sortByDesc('date')->values());
+        $userIds = collect($calls)
+            ->pluck('user_id')
+            ->merge($followups->pluck('user_id'))
+            ->merge($followups->pluck('created_by'))
+            ->merge($followups->pluck('updated_by'))
+            ->unique()
+            ->filter();
+
+        $users = \App\Models\User::on('mysql')
+            ->whereIn('id', $userIds)
+            ->get()
+            ->keyBy('id');
+
+        $callData = $calls->map(function ($call) use ($users) {
+            return [
+                'id' => $call->id,
+                'type' => 'call',
+                'title' => 'Call — ' . ucfirst($call->status),
+                'description' => $call->notes,
+                'datetime' => $call->created_at,
+                'user_name' => $users[$call->user_id]->name ?? 'Unknown',
+                'created_by_name' => $users[$call->user_id]->name ?? 'Unknown',
+            ];
+        });
+
+        $followupData = $followups->map(function ($fu) use ($users) {
+            return [
+                'id' => $fu->id,
+                'type' => 'followup',
+                'title' => 'Follow-up — ' . ucfirst($fu->type),
+                'description' => $fu->subject,
+                'datetime' => $fu->scheduled_at,
+
+                'created_by_name' => $users[$fu->created_by]->name ?? null,
+                'updated_by_name' => $users[$fu->updated_by]->name ?? null,
+
+                // ✅ ADD THIS (IMPORTANT FOR UI FALLBACK)
+                'user_name' => $users[$fu->user_id]->name ?? 'Unknown',
+            ];
+        });
+
+        return response()->json(
+            $callData
+                ->concat($followupData)
+                ->sortByDesc('datetime')
+                ->values()
+        );
     }
 }

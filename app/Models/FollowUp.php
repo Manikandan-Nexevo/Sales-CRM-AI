@@ -22,7 +22,9 @@ class FollowUp extends TenantModel
         'status',
         'ai_generated',
         'email_sent',
-        'whatsapp_sent'
+        'whatsapp_sent',
+        'created_by',
+        'updated_by'
     ];
 
     protected $casts = [

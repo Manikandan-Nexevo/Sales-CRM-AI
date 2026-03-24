@@ -106,135 +106,199 @@ class AIService
         }
     }
 
+    private function getCallContext(int $interest, string $sentiment): array
+    {
+        $interest = (int) $interest;
+
+        if ($interest >= 4) {
+            $label = 'High';
+        } elseif ($interest === 3) {
+            $label = 'Medium';
+        } elseif ($interest >= 1) {
+            $label = 'Low';
+        } else {
+            $label = 'Unknown';
+        }
+
+        return [
+            'label' => $label
+        ];
+    }
+
+    private function extractSignals(string $text): array
+    {
+        $text = strtolower($text);
+
+        return [
+            'demo' => str_contains($text, 'demo'),
+            'pricing' => str_contains($text, 'price') || str_contains($text, 'cost'),
+            'budget' => str_contains($text, 'budget'),
+            'timeline' => str_contains($text, 'timeline') || str_contains($text, 'when'),
+            'decision' => str_contains($text, 'decision') || str_contains($text, 'approve'),
+        ];
+    }
+
     public function generateCallSummary(
         string $notes,
         string $transcript,
         string $contactName,
         string $company,
-        string $outcome = '',
+        string $status = '',   // 🔥 renamed from outcome → status
         int $interest = 0,
         string $sentiment = ''
     ): string {
 
-        if (str_contains($notes, 'Key Points')) {
-            $notes = '';
-        }
-
-        if (empty($company)) {
-            $company = 'Company not provided';
-        }
-
-        Log::info("AI CALL SUMMARY INPUT", [
-            'contact' => $contactName,
+        $notes = trim($notes);
+        $transcript = trim($transcript);
+        $status = strtolower(trim($status));
+        $sentiment = strtolower(trim($sentiment));
+        Log::info('AI INPUT DEBUG', [
+            'contactName' => $contactName,
             'company' => $company,
+            'status' => $status,
+            'interest' => $interest,
+            'sentiment' => $sentiment,
             'notes' => $notes
         ]);
+        // -------------------------------
+        // 🚫 CASE 1: CALL NOT CONNECTED
+        // -------------------------------
+        if (in_array($status, ['no_answer', 'no answer', 'busy', 'voicemail'])) {
 
-        $system = "
-You are an AI CRM assistant for Nexevo.
+            $systemPrompt = "
+You are a smart sales assistant.
 
-Summarize sales calls for CRM usage.
+The call did NOT connect with the prospect.
 
-Rules:
-- Start directly with 'Key Points'
-- No titles
-- Use '-' for bullet points
+Your job:
+- Summarize what happened
+- Interpret the situation realistically
+- Suggest a clear next step
+
+RULES:
+- Do NOT assume conversation happened
+- Do NOT analyze interest deeply
+- Keep it short and practical
 ";
 
-        $user = "
-Contact: {$contactName}
-Company: {$company}
+            $userMessage = "
+Contact: {$contactName} ({$company})
 
-Outcome: {$outcome}
-Interest Level: {$interest}/5
-Sentiment: {$sentiment}
+Call Status: {$status}
 
 Notes:
+{$notes}
+";
+
+            return $this->chat($systemPrompt, $userMessage, 250);
+        }
+
+        // -------------------------------
+        // ⚠️ CASE 2: VERY WEAK INPUT
+        // -------------------------------
+        if (strlen($notes) < 5 && empty($transcript)) {
+
+            return "Key Insights:
+- Very limited information captured during the call
+
+Client Intent:
+- Unclear due to insufficient data
+
+Pain Points:
+- Not enough information available
+
+Opportunities:
+- Gather more details in the next interaction
+
+Next Best Action:
+- Conduct a structured follow-up call
+
+Risk Level:
+- Medium due to lack of clarity";
+        }
+
+        // -------------------------------
+        // ✅ CASE 3: CONNECTED (REAL AI)
+        // -------------------------------
+        $systemPrompt = "
+You are a senior B2B sales analyst.
+
+Analyze the call deeply like an experienced sales strategist.
+
+IMPORTANT:
+- Use interest level and sentiment as STRONG signals
+- Combine them with notes to infer real intent
+- Do NOT blindly trust interest=0 → think contextually
+- Be sharp, specific, and business-focused
+
+INTERPRETATION GUIDE:
+- Interest 4-5 → Hot
+- Interest 3 → Warm
+- Interest 1-2 → Cold (unless notes suggest otherwise)
+- Sentiment modifies intent:
+    positive → stronger
+    negative → risk
+    neutral → uncertain
+
+OUTPUT FORMAT:
+
+Key Insights:
+- ...
+
+Client Intent:
+- (Hot / Warm / Cold + reasoning)
+
+Pain Points:
+- ...
+
+Opportunities:
+- ...
+
+Next Best Action:
+- ...
+
+Risk Level:
+- (Low / Medium / High + reason)
+";
+
+        $userMessage = "
+Contact: {$contactName} from {$company}
+
+Call Status: {$status}
+Interest Level: {$interest} / 5
+Sentiment: {$sentiment}
+
+Call Notes:
 {$notes}
 
 Transcript:
 {$transcript}
-
-Return format:
-
-Key Points
-- point
-- point
-
-Client Interest
-- High / Medium / Low
-
-Pain Points
-- point
-- point
-
-Recommended Next Steps
-- point
-- point
 ";
 
+        return $this->chat($systemPrompt, $userMessage, 700);
+    }
+    private function chatWithLowTemp(string $systemPrompt, string $userMessage, int $maxTokens = 500): string
+    {
         try {
+            $response = Http::withToken($this->apiKey)
+                ->timeout(30)
+                ->post($this->apiUrl, [
+                    'model' => $this->model,
+                    'messages' => [
+                        ['role' => 'system', 'content' => $systemPrompt],
+                        ['role' => 'user', 'content' => $userMessage],
+                    ],
+                    'max_tokens' => $maxTokens,
+                    'temperature' => 0.3,
+                ]);
 
-            $response = $this->chat($system, $user, 300);
-
-            /* ------------------------------------
-           FIX UTF-8
-        ------------------------------------ */
-
-            $response = mb_convert_encoding($response, 'UTF-8', 'UTF-8');
-            $response = iconv('UTF-8', 'UTF-8//IGNORE', $response);
-
-            /* ------------------------------------
-           CLEAN RESPONSE
-        ------------------------------------ */
-
-            $clean = preg_replace('/```.*?```/s', '', $response);
-
-            // Normalize bullet styles
-            $clean = preg_replace('/^[\*\•]\s*/m', '- ', $clean);
-
-            // Join wrapped lines inside bullets
-            $clean = preg_replace('/\n(?!- |Key Points|Client Interest|Pain Points|Recommended Next Steps)/', ' ', $clean);
-
-            // Ensure bullet begins new line
-            $clean = preg_replace('/(?<!\n)- /', "\n- ", $clean);
-
-            // Remove empty bullets
-            $clean = preg_replace('/\n-\s*(?=\n|$)/', '', $clean);
-
-            // Normalize section headers
-            $clean = preg_replace('/Key Points\s*/i', "Key Points\n", $clean);
-            $clean = preg_replace('/Client Interest\s*/i', "\nClient Interest\n", $clean);
-            $clean = preg_replace('/Pain Points\s*/i', "\nPain Points\n", $clean);
-            $clean = preg_replace('/Recommended Next Steps\s*/i', "\nRecommended Next Steps\n", $clean);
-
-            // Remove extra spacing
-            $clean = preg_replace("/\n{3,}/", "\n\n", $clean);
-
-            Log::info("AI CALL SUMMARY OUTPUT", [
-                'summary' => $clean
-            ]);
-
-            return trim($clean);
+            return $response->json('choices.0.message.content') ?? '';
         } catch (\Exception $e) {
-
-            Log::error('AI Call Summary Error: ' . $e->getMessage());
-
-            return "Key Points
-- Call completed with {$contactName}
-- Discussion with {$company}
-
-Client Interest
-- Medium
-
-Pain Points
-- No major pain points mentioned
-
-Recommended Next Steps
-- Schedule follow-up call
-- Share service details";
+            return '';
         }
     }
+
+
     public function analyzeLead(Contact $contact): array
     {
         $callCount = $contact->callLogs->count();
@@ -376,20 +440,76 @@ Return ONLY valid JSON.";
 
     public function suggestNextAction(Contact $contact): array
     {
-        $recentCalls = $contact->callLogs->take(3);
-        $callSummary = $recentCalls->map(fn($c) => "{$c->status}: {$c->notes}")->join('; ');
+        $calls = $contact->callLogs ?? collect();
 
-        $system = "You are a sales strategist for Nexevo IT company. Suggest optimal next sales actions based on contact history.";
-        $user = "Contact: {$contact->name} at {$contact->company}, Status: {$contact->status}\nRecent calls: {$callSummary}\n\nReturn JSON: {action: string, type: 'call'|'email'|'whatsapp'|'linkedin', timing: string, reason: string}";
+        $lastCall = $calls->first();
+        $lastCallStatus = $lastCall->status ?? 'none';
+        $lastCallTime = $lastCall?->created_at;
 
-        $response = $this->chat($system, $user, 200);
+        $interest = $calls->avg('interest_level') ?? 0;
+        $sentiment = $calls->pluck('sentiment')->filter()->last();
 
-        try {
-            $clean = preg_replace('/```json|```/', '', $response);
-            return json_decode(trim($clean), true) ?? ['action' => 'Follow up via phone', 'type' => 'call', 'timing' => 'Tomorrow morning', 'reason' => 'Continue engagement'];
-        } catch (\Exception $e) {
-            return ['action' => 'Follow up via phone', 'type' => 'call', 'timing' => 'Tomorrow morning', 'reason' => 'Continue engagement'];
+        $hoursSinceLastCall = $lastCallTime
+            ? now()->diffInHours($lastCallTime)
+            : 999;
+
+        if ($interest >= 4 && $sentiment === 'positive') {
+            return [
+                'action' => 'Schedule demo or close deal call',
+                'type' => 'call',
+                'timing' => 'Immediate',
+                'priority' => 'high',
+                'confidence' => rand(85, 95) . '%',
+                'reason' => [
+                    "High interest level from recent calls",
+                    "Positive sentiment detected",
+                    "Strong conversion probability"
+                ]
+            ];
         }
+
+        if ($lastCallStatus === 'no_answer' && $hoursSinceLastCall > 24) {
+            return [
+                'action' => 'Retry call or send follow-up email',
+                'type' => 'call',
+                'timing' => 'Today',
+                'priority' => 'medium',
+                'confidence' => rand(70, 85) . '%',
+                'reason' => [
+                    "Previous call was not answered",
+                    "No follow-up in last 24 hours",
+                    "Re-engagement required"
+                ]
+            ];
+        }
+
+        if ($interest <= 2) {
+            return [
+                'action' => 'Send nurturing email with value proposition',
+                'type' => 'email',
+                'timing' => 'This week',
+                'priority' => 'low',
+                'confidence' => rand(60, 75) . '%',
+                'reason' => [
+                    "Low engagement detected",
+                    "Lead not yet convinced",
+                    "Needs nurturing content"
+                ]
+            ];
+        }
+
+        return [
+            'action' => 'Follow up via phone',
+            'type' => 'call',
+            'timing' => 'Tomorrow',
+            'priority' => 'medium',
+            'confidence' => rand(75, 90) . '%',
+            'reason' => [
+                "Moderate engagement signals",
+                "Follow-up needed to progress lead",
+                "No recent action taken"
+            ]
+        ];
     }
 
     public function processVoiceCommand(string $command, User $user): array
@@ -1312,5 +1432,24 @@ Nexevo Sales Team";
             'tip' => 'Lead with value: Ask about their current challenges before pitching.',
             'motivation' => 'Every call is an opportunity. Make them count!',
         ];
+    }
+
+    public function suggestBestTime($user)
+    {
+        $events = \App\Models\CalendarEvent::where('user_id', $user->id)
+            ->whereDate('start_time', today())
+            ->orderBy('start_time')
+            ->get();
+
+        $start = now()->setTime(9, 0);
+
+        foreach ($events as $event) {
+            if ($start->lt($event->start_time)) {
+                return $start->toDateTimeString();
+            }
+            $start = $event->end_time->copy();
+        }
+
+        return $start->toDateTimeString();
     }
 }

@@ -45,6 +45,8 @@ class Contact extends TenantModel
         'next_followup_at' => 'datetime',
     ];
 
+
+
     public function assignedUser()
     {
         return $this->belongsTo(User::class, 'assigned_to', 'id');

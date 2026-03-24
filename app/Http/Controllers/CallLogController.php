@@ -11,10 +11,14 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Http\JsonResponse;
+use App\Services\CalendarService;
 
 class CallLogController extends Controller
 {
-    public function __construct(private AIService $aiService) {}
+    public function __construct(
+        private AIService $aiService,
+        private CalendarService $calendarService
+    ) {}
 
     public function index(Request $request): JsonResponse
     {
@@ -59,7 +63,7 @@ class CallLogController extends Controller
     public function store(Request $request): JsonResponse
     {
         $request->validate([
-            'contact_id' => 'required|exists:contacts,id',
+            'contact_id' => 'required|exists:tenant.contacts,id',
             'status' => 'required|in:connected,no_answer,busy,voicemail,call_back',
             'outcome' => 'nullable|string|max:100',
             'duration' => 'nullable|integer',
@@ -74,6 +78,12 @@ class CallLogController extends Controller
 
         // 🔥 Generate AI Summary
         $notes = $request->notes ?? '';
+        Log::info('REQUEST DEBUG STORE', [
+            'full_request' => $request->all(),
+            'interest_level' => $request->interest_level,
+            'sentiment' => $request->sentiment,
+            'status' => $request->status,
+        ]);
 
         if (str_contains($notes, 'Key Points')) {
             $notes = '';
@@ -81,27 +91,29 @@ class CallLogController extends Controller
 
         $summary = $this->aiService->generateCallSummary(
             $notes,
-            '',
+            '', // transcript (keep empty for now)
             $contact->name,
-            $contact->company
+            $contact->company,
+            $request->status ?? '',
+            $request->interest_level ?? 0,
+            $request->sentiment ?? ''
         );
-
-        $contact = Contact::findOrFail($request->contact_id);
-
-        /* Generate AI summary */
-        $summary = $this->aiService->generateCallSummary(
-            $request->notes ?? '',
-            '',
-            $contact->name,
-            $contact->company
-        );
-
         $call = CallLog::create([
             ...$request->all(),
             'user_id' => $request->user()->id,
             'direction' => 'outbound',
             'ai_summary' => $summary
         ]);
+
+        if ($request->next_action_date) {
+            $this->calendarService->createEvent(
+                $request->user()->id,
+                'call',
+                $call->id,
+                "Call with {$contact->name}",
+                $request->next_action_date
+            );
+        }
 
         $contact->update([
             'last_contacted_at' => now(),
@@ -127,9 +139,22 @@ class CallLogController extends Controller
         ], 201);
     }
 
-    public function show(CallLog $call): JsonResponse
+    public function show($id): JsonResponse
     {
-        $call->load(['contact', 'user']);
+        $user = auth()->user();
+
+        $call = CallLog::with(['contact', 'user'])
+            ->when($user->role !== 'admin', function ($q) use ($user) {
+                $q->where('user_id', $user->id);
+            })
+            ->find($id);
+
+        if (!$call) {
+            return response()->json([
+                'message' => 'Call not found'
+            ], 404);
+        }
+
         return response()->json($call);
     }
 
@@ -148,7 +173,7 @@ class CallLogController extends Controller
     public function quickLog(Request $request): JsonResponse
     {
         $request->validate([
-            'contact_id' => 'required|exists:contacts,id',
+            'contact_id' => 'required',
             'status' => 'required|in:connected,no_answer,busy,voicemail,call_back',
             'duration' => 'nullable|integer',
             'notes' => 'nullable|string',
@@ -158,14 +183,22 @@ class CallLogController extends Controller
             'next_action' => 'nullable|string|max:255',
             'next_action_date' => 'nullable|date'
         ]);
-
         $contact = Contact::findOrFail($request->contact_id);
+        Log::info('REQUEST DEBUG QUICK LOG', [
+            'full_request' => $request->all(),
+            'interest_level' => $request->interest_level,
+            'sentiment' => $request->sentiment,
+            'status' => $request->status,
+        ]);
 
         $summary = $this->aiService->generateCallSummary(
             $request->notes ?? '',
             '',
             $contact->name,
-            $contact->company
+            $contact->company ?? 'Unknown Company',
+            $request->status ?? '',
+            $request->interest_level ?? 0,
+            $request->sentiment ?? ''
         );
 
         $call = CallLog::create([
@@ -174,7 +207,7 @@ class CallLogController extends Controller
             'status' => $request->status,
             'duration' => $request->duration ?? 0,
             'notes' => $request->notes,
-            'outcome' => $request->outcome,
+            'outcome' => $request->status,
             'interest_level' => $request->interest_level,
             'sentiment' => $request->sentiment,
             'next_action' => $request->next_action,
@@ -207,9 +240,15 @@ class CallLogController extends Controller
         ], 201);
     }
 
-    public function generateAISummary(Request $request, CallLog $call): JsonResponse
+    public function generateAISummary(Request $request, $id): JsonResponse
     {
-        $call->load('contact');
+        $call = CallLog::with('contact')->find($id);
+
+        if (!$call) {
+            return response()->json([
+                'message' => 'Call not found'
+            ], 404);
+        }
 
         $contact = $call->contact;
 
@@ -237,7 +276,9 @@ class CallLogController extends Controller
             'summary' => $summary
         ]);
 
-        $call->update(['ai_summary' => $summary]);
+        $call->update([
+            'ai_summary' => $summary
+        ]);
 
         return response()->json([
             'success' => true,

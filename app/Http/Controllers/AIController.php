@@ -7,6 +7,7 @@ use App\Services\AIService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use App\Helpers\MailHelper;
+use Illuminate\Support\Facades\DB;
 
 class AIController extends Controller
 {
@@ -25,13 +26,19 @@ class AIController extends Controller
     public function analyzeLead(Request $request): JsonResponse
     {
         $request->validate([
-            'contact_id' => 'required|exists:contacts,id'
+            'contact_id' => 'required|integer'
         ]);
 
         $contact = Contact::with([
             'callLogs' => fn($q) => $q->latest()->limit(10),
             'followUps' => fn($q) => $q->latest()->limit(10)
-        ])->findOrFail($request->contact_id);
+        ])->find($request->contact_id);
+
+        if (!$contact) {
+            return response()->json([
+                'message' => 'Invalid contact id'
+            ], 422);
+        }
 
         $analysis = $this->aiService->analyzeLead($contact);
 
@@ -42,6 +49,18 @@ class AIController extends Controller
 
         return response()->json([
             'analysis' => $analysis
+        ]);
+    }
+
+    public function generateProposalPDF(Request $request)
+    {
+        $contactId = $request->contact_id;
+
+        // generate or fetch PDF
+        $filePath = storage_path('app/public/proposal.pdf');
+
+        return response()->json([
+            'file_url' => asset('storage/proposal.pdf')
         ]);
     }
 
@@ -75,25 +94,43 @@ class AIController extends Controller
 
     public function suggestNextAction(Request $request): JsonResponse
     {
-        $request->validate(['contact_id' => 'required|exists:contacts,id']);
+        $request->validate([
+            'contact_id' => 'required|integer'
+        ]);
 
-        $contact = Contact::with(['callLogs' => function ($q) {
-            $q->latest()->take(5);
-        }])->find($request->contact_id);
+        $contact = Contact::with([
+            'callLogs' => fn($q) => $q->latest()->limit(10)
+        ])->find($request->contact_id);
 
+        if (!$contact) {
+            return response()->json([
+                'message' => 'Invalid contact id'
+            ], 422);
+        }
+
+        // ✅ THIS is the correct call
         $action = $this->aiService->suggestNextAction($contact);
-        return response()->json(['action' => $action]);
+
+        return response()->json([
+            'action' => $action
+        ]);
     }
 
     public function generateEmail(Request $request)
     {
         $request->validate([
-            'contact_id' => 'required|exists:contacts,id',
+            'contact_id' => 'required|integer',
             'purpose' => 'required|string',
             'tone' => 'nullable|string'
         ]);
 
-        $contact = Contact::findOrFail($request->contact_id);
+        $contact = Contact::find($request->contact_id);
+
+        if (!$contact) {
+            return response()->json([
+                'message' => 'Invalid contact id'
+            ], 422);
+        }
 
         $tone = $request->tone ?? 'friendly';
 
@@ -110,32 +147,41 @@ class AIController extends Controller
 
     public function sendGeneratedEmail(Request $request): JsonResponse
     {
+        // ✅ Ensure tenant DB is active
+        DB::connection()->getPdo();
+
         $request->validate([
-            'contact_id' => 'required|exists:contacts,id',
+            'contact_id' => 'required|integer',
             'subject' => 'required|string',
             'body' => 'required|string',
             'attachments.*' => 'file|max:20480'
         ]);
 
-        $contact = Contact::findOrFail($request->contact_id);
+        $contact = Contact::find($request->contact_id);
+
+        if (!$contact) {
+            return response()->json([
+                'message' => 'Invalid contact id'
+            ], 422);
+        }
 
         $html = nl2br(e($request->body));
 
         $attachments = [];
 
         if ($request->hasFile('attachments')) {
-
             foreach ($request->file('attachments') as $file) {
 
                 $originalName = $file->getClientOriginalName();
 
                 $path = $file->storeAs(
                     'email_attachments',
-                    $originalName
+                    $originalName,
+                    'public' // ✅ IMPORTANT
                 );
 
                 $attachments[] = [
-                    'path' => storage_path('app/' . $path),
+                    'path' => storage_path('app/public/' . $path),
                     'name' => $originalName
                 ];
             }
@@ -167,9 +213,19 @@ class AIController extends Controller
 
     public function generateLinkedInMessage(Request $request): JsonResponse
     {
-        $request->validate(['contact_id' => 'required|exists:contacts,id', 'purpose' => 'required|string']);
+        $request->validate([
+            'contact_id' => 'required|integer',
+            'purpose' => 'required|string'
+        ]);
 
         $contact = Contact::find($request->contact_id);
+
+        if (!$contact) {
+            return response()->json([
+                'message' => 'Invalid contact id'
+            ], 422);
+        }
+
         $message = $this->aiService->generateLinkedInMessage($contact, $request->purpose);
 
         return response()->json(['message' => $message]);
