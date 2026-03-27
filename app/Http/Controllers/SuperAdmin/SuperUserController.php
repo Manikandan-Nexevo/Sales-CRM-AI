@@ -49,24 +49,42 @@ class SuperUserController extends Controller
     // ── LIST ──────────────────────────────────────────────────────────────────
     public function index(Request $request): JsonResponse
     {
-        $query = User::with('company:id,name')->where('role', '!=', 'superadmin');
+        $query = User::with('company:id,name')
+            ->where('role', '!=', 'superadmin');
 
-        // Filter by company — used by Companies > View > Users tab
-        if ($companyId = $request->company_id) {
-            $query->where('company_id', $companyId);
+        // ── FILTERS ─────────────────────────────
+
+        if ($request->filled('company_id')) {
+            $query->where('company_id', $request->company_id);
         }
 
-        if ($s = $request->search) {
-            $query->where(
-                fn($q) =>
+        if ($request->filled('role')) {
+            $query->where('role', $request->role);
+        }
+
+        if ($request->filled('status')) {
+            $query->where('status', $request->status);
+        }
+
+        if ($request->filled('search')) {
+            $s = $request->search;
+
+            $query->where(function ($q) use ($s) {
                 $q->where('name', 'like', "%$s%")
                     ->orWhere('email', 'like', "%$s%")
-                    ->orWhereHas('company', fn($q2) => $q2->where('name', 'like', "%$s%"))
-            );
+                    ->orWhereHas('company', function ($q2) use ($s) {
+                        $q2->where('name', 'like', "%$s%");
+                    });
+            });
         }
 
+        // ── PAGINATION ─────────────────────────
+        /** @var \Illuminate\Pagination\LengthAwarePaginator $users */
         $users = $query->latest()->paginate($request->per_page ?? 10);
-        $users->getCollection()->transform(fn($u) => $this->transform($u));
+
+        $collection = $users->getCollection()->map(fn($u) => $this->transform($u));
+
+        $users->setCollection($collection);
 
         return response()->json($users);
     }
@@ -78,7 +96,6 @@ class SuperUserController extends Controller
         return response()->json($this->transform($user));
     }
 
-    // ── STORE ─────────────────────────────────────────────────────────────────
     public function store(Request $request): JsonResponse
     {
         $data = $request->validate([
@@ -88,17 +105,21 @@ class SuperUserController extends Controller
             'phone'      => 'nullable|string|max:30',
             'role'       => 'required|in:admin,manager,sales_rep,agent',
             'company_id' => 'required|exists:companies,id',
-            'status'     => 'required|in:active,inactive,suspended',
+            'status'     => 'required|in:active,inactive',
         ]);
 
         $data['password'] = Hash::make($data['password']);
 
-        $user = User::create($data);
+        // ✅ CONVERT STATUS → BOOLEAN
+        $data['is_active'] = $data['status'] === 'active';
+        unset($data['status']);
 
-        activity()
-            ->causedBy(auth()->user())
-            ->performedOn($user)
-            ->log("Created user: {$user->name}");
+        $user = User::create($data);
+        logActivity(
+            'create_user',
+            "User {$user->name} added to company {$user->company?->name}",
+            $user->company_id
+        );
 
         return response()->json($this->transform($user->load('company:id,name')), 201);
     }
@@ -112,24 +133,27 @@ class SuperUserController extends Controller
             'phone'      => 'nullable|string|max:30',
             'role'       => 'sometimes|in:admin,sales_rep',
             'company_id' => 'sometimes|exists:companies,id',
-            'status'     => 'sometimes|in:active,inactive,suspended',
+            'status'     => 'sometimes|in:active,inactive',
         ]);
 
-        // Only hash and update password if a non-empty value was sent
+        // ✅ HANDLE PASSWORD
         if (!empty($data['password'])) {
             $data['password'] = Hash::make($data['password']);
         } else {
             unset($data['password']);
         }
 
+        // ✅ CONVERT STATUS → BOOLEAN
+        if (isset($data['status'])) {
+            $data['is_active'] = $data['status'] === 'active';
+            unset($data['status']);
+        }
+
         $user->update($data);
 
-        // activity()
-        //     ->causedBy(auth()->user())
-        //     ->performedOn($user)
-        //     ->log("Updated user: {$user->name}");
-
-        return response()->json($this->transform($user->fresh()->load('company:id,name')));
+        return response()->json(
+            $this->transform($user->fresh()->load('company:id,name'))
+        );
     }
 
     // ── DESTROY ───────────────────────────────────────────────────────────────

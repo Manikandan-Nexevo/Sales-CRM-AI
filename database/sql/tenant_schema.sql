@@ -1,0 +1,103 @@
+CREATE TABLE `contacts` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `name` varchar(255) DEFAULT NULL,
+  `company` varchar(255) DEFAULT NULL,
+  `designation` varchar(255) DEFAULT NULL,
+  `email` varchar(255) DEFAULT NULL,
+  `phone` varchar(20) DEFAULT NULL,
+  `phone_alt` varchar(20) DEFAULT NULL,
+  `linkedin_url` text,
+  `linkedin_connected` tinyint DEFAULT '0',
+  `website` varchar(255) DEFAULT NULL,
+  `industry` varchar(100) DEFAULT NULL,
+  `company_size` varchar(50) DEFAULT NULL,
+  `location` varchar(100) DEFAULT NULL,
+  `source` varchar(100) DEFAULT NULL,
+  `status` varchar(50) DEFAULT NULL,
+  `priority` varchar(50) DEFAULT NULL,
+  `assigned_to` bigint DEFAULT NULL,
+  `notes` text,
+  `ai_score` int DEFAULT '0',
+  `ai_analysis` json DEFAULT NULL,
+  `tags` json DEFAULT NULL,
+  `last_contacted_at` datetime DEFAULT NULL,
+  `next_followup_at` datetime DEFAULT NULL,
+  `deleted_at` timestamp NULL DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT NULL,
+  `updated_at` timestamp NULL DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `email` (`email`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE `call_logs` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `user_id` bigint DEFAULT NULL,
+  `contact_id` bigint DEFAULT NULL,
+  `direction` varchar(50) DEFAULT NULL,
+  `duration` int DEFAULT '0',
+  `status` varchar(50) DEFAULT NULL,
+  `outcome` varchar(100) DEFAULT NULL,
+  `notes` text,
+  `ai_summary` text,
+  `voice_transcript` text,
+  `next_action` varchar(255) DEFAULT NULL,
+  `next_action_date` datetime DEFAULT NULL,
+  `call_recording_url` text,
+  `sentiment` varchar(50) DEFAULT NULL,
+  `interest_level` int DEFAULT NULL,
+  `scheduled_at` datetime DEFAULT NULL,
+  `answered_at` datetime DEFAULT NULL,
+  `ended_at` datetime DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT NULL,
+  `updated_at` timestamp NULL DEFAULT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE `follow_ups` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `user_id` bigint DEFAULT NULL,
+  `contact_id` bigint DEFAULT NULL,
+  `call_log_id` bigint DEFAULT NULL,
+  `type` varchar(50) DEFAULT NULL,
+  `subject` varchar(255) DEFAULT NULL,
+  `message` text,
+  `scheduled_at` datetime DEFAULT NULL,
+  `completed_at` datetime DEFAULT NULL,
+  `status` varchar(50) DEFAULT NULL,
+  `ai_generated` tinyint DEFAULT '0',
+  `email_sent` tinyint DEFAULT '0',
+  `whatsapp_sent` tinyint DEFAULT '0',
+  `created_at` timestamp NULL DEFAULT NULL,
+  `updated_at` timestamp NULL DEFAULT NULL,
+  `created_by` bigint DEFAULT NULL,
+  `updated_by` bigint DEFAULT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE `calendar_events` (
+  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
+  `user_id` bigint unsigned NOT NULL,
+  `type` varchar(50) NOT NULL,
+  `reference_id` bigint unsigned DEFAULT NULL,
+  `title` varchar(255) DEFAULT NULL,
+  `start_time` datetime NOT NULL,
+  `end_time` datetime NOT NULL,
+  `status` varchar(50) DEFAULT 'scheduled',
+  `created_at` timestamp NULL DEFAULT NULL,
+  `updated_at` timestamp NULL DEFAULT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE `whatsapp_messages` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `contact_id` bigint DEFAULT NULL,
+  `name` varchar(255) DEFAULT NULL,
+  `phone` varchar(20) DEFAULT NULL,
+  `message` text,
+  `direction` varchar(50) DEFAULT NULL,
+  `media_path` text,
+  `message_type` varchar(50) DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT NULL,
+  `updated_at` timestamp NULL DEFAULT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

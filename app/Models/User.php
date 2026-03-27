@@ -20,6 +20,7 @@ class User extends Authenticatable
         'password',
         'role',
         'phone',
+
         'avatar',
         'target_calls_daily',
         'target_leads_monthly',

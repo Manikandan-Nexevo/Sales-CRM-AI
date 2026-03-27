@@ -51,6 +51,13 @@ Route::middleware('auth:sanctum')->group(function () {
     // ── SuperAdmin only (role:superadmin) ──────────────────────────────────────
     Route::middleware('role:superadmin')->prefix('super')->group(function () {
         Route::get('dashboard',                                       [SuperAdminController::class, 'dashboard']);
+        Route::get('insights', [SuperAdminController::class, 'insights']);
+        Route::get('company-health', [SuperAdminController::class, 'companyHealth']);
+        Route::get('analytics', [SuperAdminController::class, 'analytics']);
+        Route::post('ai-query', [SuperAdminController::class, 'aiQuery']);
+        Route::get('/companies-preview', [SuperAdminController::class, 'companiesPreview']);
+        Route::get('activity', [SuperAdminController::class, 'activity']);
+        Route::get('system-health', [SuperAdminController::class, 'systemHealth']);
         Route::apiResource('companies',                               CompanyController::class);
         Route::apiResource('users',                                   SuperUserController::class);
         Route::apiResource('plans',                                   PlanController::class);
@@ -61,7 +68,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('invoices/{invoice}/pdf',                          [InvoiceController::class, 'downloadPdf']);
         Route::get('transactions',                                    [TransactionController::class, 'index']);
         Route::apiResource('roles',                                   RoleController::class);
-        Route::get('activity',                                        [ActivityController::class, 'index']);
+
         Route::get('settings',                                        [SettingsController::class, 'index']);
         Route::put('settings',                                        [SettingsController::class, 'update']);
     });

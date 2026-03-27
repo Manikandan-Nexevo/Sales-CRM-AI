@@ -55,8 +55,18 @@ class AuthController extends Controller
             ]);
         }
 
+        // ❌ user disabled
         if (!$user->is_active) {
-            return response()->json(['message' => 'Account is disabled.'], 403);
+            return response()->json([
+                'message' => 'Your account is disabled.'
+            ], 403);
+        }
+
+        // 🔥 BLOCK COMPANY INACTIVE
+        if ($user->company && $user->company->status === 'inactive') {
+            return response()->json([
+                'message' => 'Your company is inactive. Please contact super admin.'
+            ], 403);
         }
 
         // Track last login timestamp

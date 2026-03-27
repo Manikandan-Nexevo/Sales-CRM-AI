@@ -9,6 +9,8 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use App\Models\ActivityLog;
+use Illuminate\Support\Facades\Auth;
 
 class CompanyController extends Controller
 {
@@ -31,7 +33,7 @@ class CompanyController extends Controller
     private function transform(Company $c, bool $includeRelations = false): array
     {
         $data = array_merge(
-            $c->toArray(),
+            $c->fresh()->toArray(),
             [
                 'plan'       => $c->activeSubscription?->plan?->name,
                 'created_at' => $this->formatDate($c->created_at),
@@ -51,9 +53,10 @@ class CompanyController extends Controller
         $query = Company::withCount('users')->with('activeSubscription.plan');
 
         if ($s = $request->search) {
-            $query->where(fn($q) => $q
-                ->where('name',  'like', "%$s%")
-                ->orWhere('email', 'like', "%$s%")
+            $query->where(
+                fn($q) => $q
+                    ->where('name',  'like', "%$s%")
+                    ->orWhere('email', 'like', "%$s%")
             );
         }
 
@@ -95,67 +98,81 @@ class CompanyController extends Controller
     public function store(Request $request): JsonResponse
     {
         $data = $request->validate([
-            'name'    => 'nullable|string|max:255',
-            'email'   => 'nullable|email|unique:companies,email',
-            'phone'   => 'nullable|string|max:30',
+            'name' => 'required|string|max:255',
+            'email' => 'required|email|unique:companies,email',
+            'phone' => 'nullable|string|max:30',
             'address' => 'nullable|string',
             'website' => 'nullable|string|max:255',
-            'status'  => 'nullable|in:active,inactive',
+            'status' => 'nullable|in:active,inactive',
 
-            'user_name'     => 'nullable|string|max:255',
-            'user_email'    => 'nullable|email|unique:users,email',
-            'user_password' => 'nullable|min:6',
-
-            'db_host'     => 'nullable|string',
-            'db_name'     => 'nullable|string',
-            'db_username' => 'nullable|string',
-            'db_password' => 'nullable|string',
-            'db_port'     => 'nullable|integer',
+            'user_name' => 'required|string|max:255',
+            'user_email' => 'required|email|unique:users,email',
+            'user_password' => 'required|min:6',
         ]);
 
-        DB::beginTransaction();
-
         try {
+            // ✅ 1. Create company FIRST
             $company = Company::create([
-                'name'        => $data['name'],
-                'email'       => $data['email'],
-                'phone'       => $data['phone']    ?? null,
-                'address'     => $data['address']  ?? null,
-                'website'     => $data['website']  ?? null,
-                'status'      => $data['status']   ?? 'active',
-                'db_host'     => $data['db_host']     ?? null,
-                'db_name'     => $data['db_name']     ?? null,
-                'db_username' => $data['db_username'] ?? null,
-                'db_password' => $data['db_password'] ?? null,
-                'db_port'     => $data['db_port']     ?? 3306,
+                'name' => $data['name'],
+                'email' => $data['email'],
+                'phone' => $data['phone'] ?? null,
+                'address' => $data['address'] ?? null,
+                'website' => $data['website'] ?? null,
+                'status' => $data['status'] ?? 'active',
+            ]);
+            logActivity('create_company', "Company {$company->name} created", $company->id);
+
+            // ✅ 2. Create DB
+            $dbName = 'tenant_' . $company->id;
+            DB::statement("CREATE DATABASE `$dbName`");
+
+            // ✅ 3. Update company DB info
+            $company->update([
+                'db_host' => '127.0.0.1',
+                'db_name' => $dbName,
+                'db_username' => 'root',
+                'db_password' => null,
+                'db_port' => 3306,
             ]);
 
+            // ✅ 4. Switch connection
+            config([
+                'database.connections.tenant' => [
+                    'driver' => 'mysql',
+                    'host' => '127.0.0.1',
+                    'database' => $dbName,
+                    'username' => 'root',
+                    'password' => '',
+                    'port' => 3306,
+                    'charset' => 'utf8mb4',
+                    'collation' => 'utf8mb4_unicode_ci',
+                ]
+            ]);
+
+            DB::purge('tenant');
+            DB::reconnect('tenant');
+
+            // ✅ 5. Run schema
+            $sql = file_get_contents(database_path('sql/tenant_schema.sql'));
+            DB::connection('tenant')->unprepared($sql);
+
+            // ✅ 6. Create admin user
             $user = User::create([
-                'name'       => $data['user_name'],
-                'email'      => $data['user_email'],
-                'password'   => Hash::make($data['user_password']),
-                'role'       => 'admin',
+                'name' => $data['user_name'],
+                'email' => $data['user_email'],
+                'password' => Hash::make($data['user_password']),
+                'role' => 'admin',
                 'company_id' => $company->id,
             ]);
 
-            DB::commit();
-
-            $companyData = $company->toArray();
-            $companyData['created_at'] = $this->formatDate($company->created_at);
-            unset($companyData['db_password']);
-
-            $userData = $user->toArray();
-            $userData['created_at'] = $this->formatDate($user->created_at);
-            unset($userData['password']);
-
             return response()->json([
-                'company' => $companyData,
-                'user'    => $userData,
+                'company' => $company,
+                'user' => $user
             ], 201);
-
         } catch (\Exception $e) {
-            DB::rollBack();
-            return response()->json(['message' => $e->getMessage()], 500);
+            return response()->json([
+                'message' => $e->getMessage()
+            ], 500);
         }
     }
 
@@ -168,24 +185,74 @@ class CompanyController extends Controller
             'phone'       => 'nullable|string|max:30',
             'address'     => 'nullable|string',
             'website'     => 'nullable|string|max:255',
-            'status'      => 'sometimes|in:active,inactive',
+            'status'      => 'nullable|in:active,inactive', // 🔥 FIXED
+
             'db_host'     => 'nullable|string',
             'db_name'     => 'nullable|string',
             'db_username' => 'nullable|string',
             'db_password' => 'nullable|string',
             'db_port'     => 'nullable|integer',
+
+            'db_mode'     => 'nullable|in:auto,external',
         ]);
 
-        // Only update db_password if a new one was actually provided
+        $dbMode = $request->input('db_mode');
+
+        // ✅ HANDLE DB UPDATE ONLY IF MODE IS EXTERNAL
+        if ($dbMode === 'external') {
+            try {
+                config([
+                    'database.connections.temp' => [
+                        'driver'   => 'mysql',
+                        'host'     => $data['db_host'] ?? null,
+                        'database' => $data['db_name'] ?? null,
+                        'username' => $data['db_username'] ?? null,
+                        'password' => $data['db_password'] ?? null,
+                        'port'     => $data['db_port'] ?? 3306,
+                    ]
+                ]);
+
+                DB::connection('temp')->getPdo();
+            } catch (\Exception $e) {
+                return response()->json([
+                    'message' => 'External DB connection failed'
+                ], 422);
+            }
+        }
+
+        // ✅ Prevent empty password overwrite
         if (isset($data['db_password']) && empty($data['db_password'])) {
             unset($data['db_password']);
         }
 
-        $company->update($data);
+        // 🔥 CRITICAL FIX: FORCE STATUS UPDATE
+        if ($request->has('status')) {
+            $company->status = $request->input('status');
+        }
 
-        $result = $company->fresh()->toArray();
+        // ✅ Fill remaining fields
+        $company->fill($data);
+        $oldStatus = $company->status;
+        $newStatus = $request->input('status');
+        $company->save();
+
+        if ($newStatus && $oldStatus !== $newStatus) {
+            logActivity(
+                'company_status',
+                "Company {$company->name} changed from {$oldStatus} to {$newStatus}",
+                $company->id
+            );
+        } else {
+            logActivity('update_company', "Company {$company->name} updated", $company->id);
+        }
+
+        // ✅ Return fresh updated data
+        $company = $company->fresh();
+
+        $result = $company->toArray();
         $result['created_at'] = $this->formatDate($company->created_at);
         $result['updated_at'] = $this->formatDate($company->updated_at);
+
         unset($result['db_password']);
 
         return response()->json($result);
@@ -195,6 +262,12 @@ class CompanyController extends Controller
     public function destroy(Company $company): JsonResponse
     {
         $company->delete();
+        ActivityLog::create([
+            'user_id' => Auth::id(),
+            'company_id' => $company->id,
+            'action' => 'delete',
+            'description' => "Company {$company->name} deleted"
+        ]);
         return response()->json(['success' => true]);
     }
 }
