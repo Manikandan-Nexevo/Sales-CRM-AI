@@ -159,11 +159,16 @@ class ContactController extends Controller
         $calls = CallLog::where('contact_id', $contact->id)->get();
         $followups = FollowUp::where('contact_id', $contact->id)->get();
 
+        // ✅ ADD: fetch bookings for this contact
+        $bookings = \App\Models\Booking::where('contact_id', $contact->id)->get();
+
         $userIds = collect($calls)
             ->pluck('user_id')
             ->merge($followups->pluck('user_id'))
             ->merge($followups->pluck('created_by'))
             ->merge($followups->pluck('updated_by'))
+            ->merge($bookings->pluck('created_by'))  // ✅ ADD
+            ->merge($bookings->pluck('updated_by'))  // ✅ ADD
             ->unique()
             ->filter();
 
@@ -191,18 +196,39 @@ class ContactController extends Controller
                 'title' => 'Follow-up — ' . ucfirst($fu->type),
                 'description' => $fu->subject,
                 'datetime' => $fu->scheduled_at,
-
                 'created_by_name' => $users[$fu->created_by]->name ?? null,
                 'updated_by_name' => $users[$fu->updated_by]->name ?? null,
-
-                // ✅ ADD THIS (IMPORTANT FOR UI FALLBACK)
                 'user_name' => $users[$fu->user_id]->name ?? 'Unknown',
+            ];
+        });
+
+        // ✅ ADD: map bookings to timeline items
+        $bookingData = $bookings->map(function ($booking) use ($users) {
+            $statusLabel = match ($booking->status ?? '') {
+                'confirmed'   => 'Confirmed',
+                'rescheduled' => 'Rescheduled',
+                'cancelled'   => 'Cancelled',
+                'completed'   => 'Completed',
+                default       => ucfirst($booking->status ?? 'Scheduled'),
+            };
+
+            return [
+                'id'               => $booking->id,
+                'type'             => 'booking',
+                'title'            => 'Meeting — ' . $statusLabel,
+                'description'      => $booking->title ?? $booking->notes ?? null,
+                'datetime'         => $booking->scheduled_at ?? $booking->created_at,
+                'status'           => $booking->status,
+                'created_by_name'  => $users[$booking->created_by]->name ?? null,
+                'updated_by_name'  => $users[$booking->updated_by]->name ?? null,
+                'user_name'        => $users[$booking->created_by]->name ?? 'Unknown',
             ];
         });
 
         return response()->json(
             $callData
                 ->concat($followupData)
+                ->concat($bookingData)   // ✅ ADD
                 ->sortByDesc('datetime')
                 ->values()
         );

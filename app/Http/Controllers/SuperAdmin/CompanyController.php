@@ -32,16 +32,21 @@ class CompanyController extends Controller
      */
     private function transform(Company $c, bool $includeRelations = false): array
     {
+        $userCount = DB::connection('mysql')
+            ->table('users')
+            ->where('company_id', $c->id)
+            ->count();
+
         $data = array_merge(
-            $c->fresh()->toArray(),
+            $c->toArray(), // ✅ FIXED (removed fresh())
             [
                 'plan'       => $c->activeSubscription?->plan?->name,
+                'users'      => $userCount, // ✅ ADD THIS
                 'created_at' => $this->formatDate($c->created_at),
                 'updated_at' => $this->formatDate($c->updated_at),
             ]
         );
 
-        // Never expose raw DB password in responses
         unset($data['db_password']);
 
         return $data;
@@ -50,7 +55,7 @@ class CompanyController extends Controller
     // ── LIST ─────────────────────────────────────────────────────────────────
     public function index(Request $request): JsonResponse
     {
-        $query = Company::withCount('users')->with('activeSubscription.plan');
+        $query = Company::with('activeSubscription.plan');
 
         if ($s = $request->search) {
             $query->where(
@@ -120,7 +125,12 @@ class CompanyController extends Controller
                 'website' => $data['website'] ?? null,
                 'status' => $data['status'] ?? 'active',
             ]);
-            logActivity('create_company', "Company {$company->name} created", $company->id);
+            ActivityLog::create([
+                'user_id' => Auth::id(),
+                'company_id' => $company->id,
+                'action' => 'create_company',
+                'description' => "Company {$company->name} created",
+            ]);
 
             // ✅ 2. Create DB
             $dbName = 'tenant_' . $company->id;
@@ -237,13 +247,19 @@ class CompanyController extends Controller
         $company->save();
 
         if ($newStatus && $oldStatus !== $newStatus) {
-            logActivity(
-                'company_status',
-                "Company {$company->name} changed from {$oldStatus} to {$newStatus}",
-                $company->id
-            );
+            ActivityLog::create([
+                'user_id' => Auth::id(),
+                'company_id' => $company->id,
+                'action' => 'company_status',
+                'description' => "Company {$company->name} changed from {$oldStatus} to {$newStatus}",
+            ]);
         } else {
-            logActivity('update_company', "Company {$company->name} updated", $company->id);
+            ActivityLog::create([
+                'user_id' => Auth::id(),
+                'company_id' => $company->id,
+                'action' => 'update_company',
+                'description' => "Company {$company->name} updated",
+            ]);
         }
 
         // ✅ Return fresh updated data

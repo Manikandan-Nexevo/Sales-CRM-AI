@@ -173,7 +173,7 @@ class SuperAdminController extends Controller
     {
         return Company::withCount('users')
             ->latest()
-            ->limit(5) // dashboard only
+
             ->get()
             ->map(function ($c) {
                 return [
