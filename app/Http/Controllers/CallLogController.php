@@ -76,14 +76,7 @@ class CallLogController extends Controller
 
         $contact = Contact::findOrFail($request->contact_id);
 
-        // 🔥 Generate AI Summary
         $notes = $request->notes ?? '';
-        Log::info('REQUEST DEBUG STORE', [
-            'full_request' => $request->all(),
-            'interest_level' => $request->interest_level,
-            'sentiment' => $request->sentiment,
-            'status' => $request->status,
-        ]);
 
         if (str_contains($notes, 'Key Points')) {
             $notes = '';
@@ -91,13 +84,14 @@ class CallLogController extends Controller
 
         $summary = $this->aiService->generateCallSummary(
             $notes,
-            '', // transcript (keep empty for now)
+            '',
             $contact->name,
             $contact->company,
             $request->status ?? '',
             $request->interest_level ?? 0,
             $request->sentiment ?? ''
         );
+
         $call = CallLog::create([
             ...$request->all(),
             'user_id' => $request->user()->id,
@@ -170,6 +164,50 @@ class CallLogController extends Controller
         return response()->json(['success' => true]);
     }
 
+    /**
+     * ✅ NEW: Generate AI summary preview WITHOUT saving any call record to the database.
+     * Called by the "AI Summary" button in QuickCallModal before the user submits the form.
+     *
+     * Route: POST /api/calls/preview-summary
+     */
+    public function previewSummary(Request $request): JsonResponse
+    {
+        $request->validate([
+            'contact_id' => 'required|exists:tenant.contacts,id',
+            'status'     => 'required|in:connected,no_answer,busy,voicemail,call_back',
+            'notes'      => 'nullable|string',
+            'outcome'    => 'nullable|string|max:100',
+            'interest_level' => 'nullable|integer|min:1|max:5',
+            'sentiment'  => 'nullable|in:positive,neutral,negative',
+            'duration'   => 'nullable|integer',
+        ]);
+
+        $contact = Contact::findOrFail($request->contact_id);
+
+        Log::info('PREVIEW SUMMARY REQUEST', [
+            'contact_id'     => $request->contact_id,
+            'status'         => $request->status,
+            'interest_level' => $request->interest_level,
+            'sentiment'      => $request->sentiment,
+        ]);
+
+        // ✅ Only generate summary — NO CallLog::create() here
+        $summary = $this->aiService->generateCallSummary(
+            $request->notes ?? '',
+            '',
+            $contact->name,
+            $contact->company ?? 'Unknown Company',
+            $request->status ?? '',
+            $request->interest_level ?? 0,
+            $request->sentiment ?? ''
+        );
+
+        return response()->json([
+            'success' => true,
+            'summary' => $summary,   // ← frontend reads res.data.summary
+        ]);
+    }
+
     public function quickLog(Request $request): JsonResponse
     {
         $request->validate([
@@ -183,14 +221,17 @@ class CallLogController extends Controller
             'next_action' => 'nullable|string|max:255',
             'next_action_date' => 'nullable|date'
         ]);
+
         $contact = Contact::findOrFail($request->contact_id);
-        Log::info('REQUEST DEBUG QUICK LOG', [
-            'full_request' => $request->all(),
+
+        Log::info('QUICK LOG REQUEST', [
+            'full_request'   => $request->all(),
             'interest_level' => $request->interest_level,
-            'sentiment' => $request->sentiment,
-            'status' => $request->status,
+            'sentiment'      => $request->sentiment,
+            'status'         => $request->status,
         ]);
 
+        // Generate AI summary as part of saving the call record
         $summary = $this->aiService->generateCallSummary(
             $request->notes ?? '',
             '',
@@ -201,19 +242,20 @@ class CallLogController extends Controller
             $request->sentiment ?? ''
         );
 
+        // ✅ Saved exactly ONE time here
         $call = CallLog::create([
-            'contact_id' => $request->contact_id,
-            'user_id' => $request->user()->id,
-            'status' => $request->status,
-            'duration' => $request->duration ?? 0,
-            'notes' => $request->notes,
-            'outcome' => $request->status,
+            'contact_id'     => $request->contact_id,
+            'user_id'        => $request->user()->id,
+            'status'         => $request->status,
+            'duration'       => $request->duration ?? 0,
+            'notes'          => $request->notes,
+            'outcome'        => $request->outcome ?? $request->status,
             'interest_level' => $request->interest_level,
-            'sentiment' => $request->sentiment,
-            'next_action' => $request->next_action,
+            'sentiment'      => $request->sentiment,
+            'next_action'    => $request->next_action,
             'next_action_date' => $request->next_action_date,
-            'direction' => 'outbound',
-            'ai_summary' => $summary
+            'direction'      => 'outbound',
+            'ai_summary'     => $summary
         ]);
 
         $contact->update([
@@ -222,13 +264,13 @@ class CallLogController extends Controller
 
         if ($request->next_action && $request->next_action_date) {
             FollowUp::create([
-                'user_id' => $request->user()->id,
-                'contact_id' => $request->contact_id,
+                'user_id'     => $request->user()->id,
+                'contact_id'  => $request->contact_id,
                 'call_log_id' => $call->id,
-                'type' => 'call',
-                'subject' => $request->next_action,
+                'type'        => 'call',
+                'subject'     => $request->next_action,
                 'scheduled_at' => $request->next_action_date,
-                'status' => 'pending'
+                'status'      => 'pending'
             ]);
         }
 
@@ -236,7 +278,7 @@ class CallLogController extends Controller
 
         return response()->json([
             'success' => true,
-            'call' => $call
+            'call'    => $call
         ], 201);
     }
 
@@ -252,13 +294,13 @@ class CallLogController extends Controller
 
         $contact = $call->contact;
 
-        Log::info("AI SUMMARY DEBUG", [
-            'call_id' => $call->id,
-            'contact_id' => $contact?->id,
+        Log::info('AI SUMMARY DEBUG', [
+            'call_id'      => $call->id,
+            'contact_id'   => $contact?->id,
             'contact_name' => $contact?->name,
-            'company' => $contact?->company,
-            'notes' => $call->notes,
-            'transcript' => $call->voice_transcript
+            'company'      => $contact?->company,
+            'notes'        => $call->notes,
+            'transcript'   => $call->voice_transcript
         ]);
 
         $summary = $this->aiService->generateCallSummary(
@@ -271,7 +313,7 @@ class CallLogController extends Controller
             $call->sentiment ?? ''
         );
 
-        Log::info("AI GENERATED SUMMARY", [
+        Log::info('AI GENERATED SUMMARY', [
             'call_id' => $call->id,
             'summary' => $summary
         ]);
@@ -298,9 +340,9 @@ class CallLogController extends Controller
         return response()->json([
             'calls' => $calls,
             'stats' => [
-                'total' => $calls->count(),
-                'connected' => $calls->where('status', 'connected')->count(),
-                'no_answer' => $calls->where('status', 'no_answer')->count(),
+                'total'          => $calls->count(),
+                'connected'      => $calls->where('status', 'connected')->count(),
+                'no_answer'      => $calls->where('status', 'no_answer')->count(),
                 'total_duration' => $calls->sum('duration'),
             ]
         ]);

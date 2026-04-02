@@ -141,6 +141,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/calls/{call}/ai-summary', [CallLogController::class, 'generateAISummary']);
     Route::get('/calls/today',             [CallLogController::class, 'todaysCalls']);
     Route::post('/calls/voice-transcript', [CallLogController::class, 'processVoiceTranscript']);
+    Route::post('/calls/preview-summary', [CallLogController::class, 'previewSummary']);
 
     // ── Follow-ups ────────────────────────────────────────────────────────────
     Route::get('/followups/upcoming',      [FollowUpController::class, 'upcomingFollowups']);
