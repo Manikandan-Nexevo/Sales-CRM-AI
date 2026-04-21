@@ -164,12 +164,6 @@ class CallLogController extends Controller
         return response()->json(['success' => true]);
     }
 
-    /**
-     * ✅ NEW: Generate AI summary preview WITHOUT saving any call record to the database.
-     * Called by the "AI Summary" button in QuickCallModal before the user submits the form.
-     *
-     * Route: POST /api/calls/preview-summary
-     */
     public function previewSummary(Request $request): JsonResponse
     {
         $request->validate([
@@ -231,7 +225,6 @@ class CallLogController extends Controller
             'status'         => $request->status,
         ]);
 
-        // Generate AI summary as part of saving the call record
         $summary = $this->aiService->generateCallSummary(
             $request->notes ?? '',
             '',
@@ -242,7 +235,6 @@ class CallLogController extends Controller
             $request->sentiment ?? ''
         );
 
-        // ✅ Saved exactly ONE time here
         $call = CallLog::create([
             'contact_id'     => $request->contact_id,
             'user_id'        => $request->user()->id,

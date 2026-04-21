@@ -159,7 +159,6 @@ class ContactController extends Controller
         $calls = CallLog::where('contact_id', $contact->id)->get();
         $followups = FollowUp::where('contact_id', $contact->id)->get();
 
-        // ✅ ADD: fetch bookings for this contact
         $bookings = \App\Models\Booking::where('contact_id', $contact->id)->get();
 
         $userIds = collect($calls)
@@ -167,8 +166,8 @@ class ContactController extends Controller
             ->merge($followups->pluck('user_id'))
             ->merge($followups->pluck('created_by'))
             ->merge($followups->pluck('updated_by'))
-            ->merge($bookings->pluck('created_by'))  // ✅ ADD
-            ->merge($bookings->pluck('updated_by'))  // ✅ ADD
+            ->merge($bookings->pluck('created_by'))
+            ->merge($bookings->pluck('updated_by'))
             ->unique()
             ->filter();
 
@@ -202,7 +201,6 @@ class ContactController extends Controller
             ];
         });
 
-        // ✅ ADD: map bookings to timeline items
         $bookingData = $bookings->map(function ($booking) use ($users) {
             $statusLabel = match ($booking->status ?? '') {
                 'confirmed'   => 'Confirmed',
@@ -228,7 +226,7 @@ class ContactController extends Controller
         return response()->json(
             $callData
                 ->concat($followupData)
-                ->concat($bookingData)   // ✅ ADD
+                ->concat($bookingData)
                 ->sortByDesc('datetime')
                 ->values()
         );

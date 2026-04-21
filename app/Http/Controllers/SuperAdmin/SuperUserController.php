@@ -10,9 +10,6 @@ use Illuminate\Support\Facades\Hash;
 
 class SuperUserController extends Controller
 {
-    /**
-     * Format date to d-m-Y h:i:s A
-     */
     private function formatDate(?string $date): ?string
     {
         if (!$date) return null;
@@ -23,12 +20,6 @@ class SuperUserController extends Controller
         }
     }
 
-    /**
-     * Transform user for API response.
-     * - Formats dates
-     * - Appends company_name
-     * - Strips password
-     */
     private function transform(User $u): array
     {
         $data = array_merge(
@@ -46,13 +37,10 @@ class SuperUserController extends Controller
         return $data;
     }
 
-    // ── LIST ──────────────────────────────────────────────────────────────────
     public function index(Request $request): JsonResponse
     {
         $query = User::with('company:id,name')
             ->where('role', '!=', 'superadmin');
-
-        // ── FILTERS ─────────────────────────────
 
         if ($request->filled('company_id')) {
             $query->where('company_id', $request->company_id);
@@ -110,7 +98,6 @@ class SuperUserController extends Controller
 
         $data['password'] = Hash::make($data['password']);
 
-        // ✅ CONVERT STATUS → BOOLEAN
         $data['is_active'] = $data['status'] === 'active';
         unset($data['status']);
 
@@ -124,7 +111,6 @@ class SuperUserController extends Controller
         return response()->json($this->transform($user->load('company:id,name')), 201);
     }
 
-    // ── UPDATE ────────────────────────────────────────────────────────────────
     public function update(Request $request, User $user): JsonResponse
     {
         $data = $request->validate([
@@ -136,14 +122,12 @@ class SuperUserController extends Controller
             'status'     => 'sometimes|in:active,inactive',
         ]);
 
-        // ✅ HANDLE PASSWORD
         if (!empty($data['password'])) {
             $data['password'] = Hash::make($data['password']);
         } else {
             unset($data['password']);
         }
 
-        // ✅ CONVERT STATUS → BOOLEAN
         if (isset($data['status'])) {
             $data['is_active'] = $data['status'] === 'active';
             unset($data['status']);
@@ -156,7 +140,6 @@ class SuperUserController extends Controller
         );
     }
 
-    // ── DESTROY ───────────────────────────────────────────────────────────────
     public function destroy(User $user): JsonResponse
     {
         $user->tokens()->delete();

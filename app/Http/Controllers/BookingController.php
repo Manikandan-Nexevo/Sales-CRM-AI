@@ -1,12 +1,4 @@
 <?php
-// FILE: app/Http/Controllers/BookingController.php
-// CHANGES FROM PREVIOUS VERSION:
-// 1. cancel/cancelInternal: now DELETES Google Calendar event (was just updating local status)
-// 2. reschedule/rescheduleInternal: now PATCHES Google Calendar event times
-// 3. Added sendCancellationEmail() — sent on every cancel
-// 4. Added sendRescheduleEmail() — sent on every reschedule
-// 5. buildMeeting() unchanged — meeting_link already stores Google event ID for gmeet
-// 6. No new DB columns needed — meeting_link col reused as Google event ID for gmeet
 
 namespace App\Http\Controllers;
 
@@ -68,7 +60,6 @@ class BookingController extends Controller
         return response()->json(['date' => $date, 'slots' => $slots, 'duration' => $link->duration]);
     }
 
-    /** POST /api/book/{slug} — Public booking */
     public function book(Request $request, $slug)
     {
         $request->validate([
@@ -147,7 +138,6 @@ class BookingController extends Controller
         return response()->json(['message' => 'Booking confirmed', 'data' => $bookingObj]);
     }
 
-    /** POST /api/book/{slug}/reschedule */
     public function reschedule(Request $request, $slug)
     {
         $request->validate(['booking_id' => 'required|integer', 'new_time' => 'required|date']);
@@ -163,12 +153,10 @@ class BookingController extends Controller
 
         $this->updateCalendarEventTimes($request->booking_id, $start, $end);
 
-        // Patch Google Calendar event with new times
         if ($booking && $booking->meeting_type === 'gmeet' && !empty($booking->meeting_link)) {
             $this->patchGoogleCalendarEvent($booking->user_id, $booking->meeting_link, $start, $end);
         }
 
-        // Send reschedule email
         if ($booking) {
             $hostUser = DB::connection('mysql')->table('users')->where('id', $booking->user_id)->first();
             $this->sendRescheduleEmail(
@@ -186,7 +174,6 @@ class BookingController extends Controller
         return response()->json(['message' => 'Booking rescheduled successfully']);
     }
 
-    /** POST /api/book/{slug}/cancel */
     public function cancel(Request $request, $slug)
     {
         $request->validate(['booking_id' => 'required|integer']);
@@ -199,12 +186,10 @@ class BookingController extends Controller
 
         $this->cancelCalendarEvent($request->booking_id);
 
-        // DELETE from Google Calendar so it disappears for all attendees
         if ($booking && $booking->meeting_type === 'gmeet' && !empty($booking->meeting_link)) {
             $this->deleteGoogleCalendarEvent($booking->user_id, $booking->meeting_link);
         }
 
-        // Send cancellation email
         if ($booking) {
             $hostUser = DB::connection('mysql')->table('users')->where('id', $booking->user_id)->first();
             $this->sendCancellationEmail(
@@ -219,11 +204,6 @@ class BookingController extends Controller
         return response()->json(['message' => 'Booking cancelled successfully']);
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // INTERNAL  (auth:sanctum)
-    // ─────────────────────────────────────────────────────────────────────────
-
-    /** GET /api/internal/slots?date=YYYY-MM-DD */
     public function getSlotsInternal(Request $request)
     {
         $userId = auth()->id();
@@ -252,7 +232,6 @@ class BookingController extends Controller
         return response()->json(['slots' => $slots]);
     }
 
-    /** POST /api/internal/book */
     public function bookInternal(Request $request)
     {
         $userId = auth()->id();
@@ -330,7 +309,6 @@ class BookingController extends Controller
         return response()->json(['message' => 'Meeting scheduled successfully', 'data' => $bookingObj]);
     }
 
-    /** POST /api/internal/reschedule */
     public function rescheduleInternal(Request $request)
     {
         $userId = auth()->id();
@@ -360,12 +338,10 @@ class BookingController extends Controller
 
         $this->updateCalendarEventTimes($request->booking_id, $start, $end);
 
-        // Patch Google Calendar event with new times
         if ($booking->meeting_type === 'gmeet' && !empty($booking->meeting_link)) {
             $this->patchGoogleCalendarEvent($userId, $booking->meeting_link, $start, $end);
         }
 
-        // Send reschedule email
         $hostUser = auth()->user();
         $this->sendRescheduleEmail(
             toEmail: $booking->email,
@@ -381,7 +357,6 @@ class BookingController extends Controller
         return response()->json(['message' => 'Rescheduled successfully']);
     }
 
-    /** POST /api/internal/cancel */
     public function cancelInternal(Request $request)
     {
         $userId = auth()->id();
@@ -405,12 +380,10 @@ class BookingController extends Controller
 
         $this->cancelCalendarEvent($request->booking_id);
 
-        // DELETE from Google Calendar so it disappears for all attendees
         if ($booking->meeting_type === 'gmeet' && !empty($booking->meeting_link)) {
             $this->deleteGoogleCalendarEvent($userId, $booking->meeting_link);
         }
 
-        // Send cancellation email
         $hostUser = auth()->user();
         $this->sendCancellationEmail(
             toEmail: $booking->email,
@@ -423,7 +396,6 @@ class BookingController extends Controller
         return response()->json(['message' => 'Cancelled successfully']);
     }
 
-    /** POST /api/availability */
     public function setAvailability(Request $request)
     {
         $userId = auth()->id();
@@ -452,7 +424,6 @@ class BookingController extends Controller
         return response()->json(['message' => 'Availability saved successfully.', 'days' => count($rows)]);
     }
 
-    /** GET /api/availability */
     public function getAvailabilitySettings()
     {
         $userId = auth()->id();
@@ -468,7 +439,6 @@ class BookingController extends Controller
         return response()->json(['availability' => $availability, 'booking_link' => $bookingUrl]);
     }
 
-    /** GET /api/my-bookings */
     public function myBookings()
     {
         $userId = auth()->id();
@@ -493,7 +463,6 @@ class BookingController extends Controller
         return response()->json($bookings);
     }
 
-    /** GET /api/meeting-token/{roomName} */
     public function getMeetingToken(Request $request, string $roomName)
     {
         $userId = auth()->id();
@@ -520,10 +489,6 @@ class BookingController extends Controller
             'room_name' => $roomName,
         ]);
     }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Meeting builder
-    // ─────────────────────────────────────────────────────────────────────────
 
     private function buildMeeting(
         string $meetingType,
@@ -616,19 +581,9 @@ class BookingController extends Controller
             return [$roomName, "https://meet.jit.si/{$roomName}"];
         }
 
-        // meeting_link = Google event ID (used later for patch/delete)
-        // meeting_url  = actual https://meet.google.com/xxx-xxxx-xxx link
         return [$eventId, $meetingUrl];
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Google Calendar — patch & delete
-    // ─────────────────────────────────────────────────────────────────────────
-
-    /**
-     * DELETE a Google Calendar event so it disappears from all attendees' calendars.
-     * Called on cancel. sendUpdates=all notifies attendees automatically.
-     */
     private function deleteGoogleCalendarEvent(int $userId, string $googleEventId): void
     {
         try {
@@ -655,10 +610,6 @@ class BookingController extends Controller
         }
     }
 
-    /**
-     * PATCH a Google Calendar event with new start/end times.
-     * Called on reschedule. sendUpdates=all notifies attendees automatically.
-     */
     private function patchGoogleCalendarEvent(int $userId, string $googleEventId, Carbon $start, Carbon $end): void
     {
         try {
@@ -729,10 +680,6 @@ class BookingController extends Controller
         return $user->google_access_token ?? '';
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Emails
-    // ─────────────────────────────────────────────────────────────────────────
-
     private function sendConfirmationEmail(
         string  $toEmail,
         string  $toName,
@@ -776,8 +723,6 @@ BODY;
             Log::error('Confirmation email failed: ' . $e->getMessage(), ['to' => $toEmail]);
         }
     }
-
-    // ── NEW ──────────────────────────────────────────────────────────────────
 
     private function sendCancellationEmail(
         string $toEmail,
@@ -868,10 +813,6 @@ BODY;
         }
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Email helpers
-    // ─────────────────────────────────────────────────────────────────────────
-
     private function detailsTable(string $date, string $time, string $tz, string $host, string $platform): string
     {
         return <<<HTML
@@ -935,10 +876,6 @@ HTML;
 HTML;
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Multi-tenant DB helpers
-    // ─────────────────────────────────────────────────────────────────────────
-
     private function tenantConnectionName(): string
     {
         return (new Booking())->getConnectionName() ?? config('database.default');
@@ -948,10 +885,6 @@ HTML;
     {
         return DB::connection($this->tenantConnectionName());
     }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Slot helpers
-    // ─────────────────────────────────────────────────────────────────────────
 
     private function slotTaken(int $userId, Carbon $start, Carbon $end): bool
     {
@@ -989,10 +922,6 @@ HTML;
 
         return array_values(array_diff($slots, $booked));
     }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Calendar event helpers (tenant DB — calendar_events HAS updated_at)
-    // ─────────────────────────────────────────────────────────────────────────
 
     private function insertCalendarEvent(int $userId, object $booking, string $name): void
     {

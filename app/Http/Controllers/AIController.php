@@ -56,19 +56,12 @@ class AIController extends Controller
     {
         $contactId = $request->contact_id;
 
-        // generate or fetch PDF
         $filePath = storage_path('app/public/proposal.pdf');
 
         return response()->json([
             'file_url' => asset('storage/proposal.pdf')
         ]);
     }
-
-
-
-
-
-
 
     public function callSummary(Request $request): JsonResponse
     {
@@ -108,7 +101,6 @@ class AIController extends Controller
             ], 422);
         }
 
-        // ✅ THIS is the correct call
         $action = $this->aiService->suggestNextAction($contact);
 
         return response()->json([
@@ -147,7 +139,6 @@ class AIController extends Controller
 
     public function sendGeneratedEmail(Request $request): JsonResponse
     {
-        // ✅ Ensure tenant DB is active
         DB::connection()->getPdo();
 
         $request->validate([
@@ -177,7 +168,7 @@ class AIController extends Controller
                 $path = $file->storeAs(
                     'email_attachments',
                     $originalName,
-                    'public' // ✅ IMPORTANT
+                    'public'
                 );
 
                 $attachments[] = [

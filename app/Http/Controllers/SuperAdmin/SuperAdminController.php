@@ -188,7 +188,7 @@ class SuperAdminController extends Controller
     }
     public function activity()
     {
-        $logs = \App\Models\ActivityLog::latest()->limit(10)->get();
+        $logs = ActivityLog::latest()->limit(10)->get();
 
         return response()->json([
             'data' => $logs->map(fn($log) => [

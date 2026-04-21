@@ -27,9 +27,6 @@ class CompanyController extends Controller
         }
     }
 
-    /**
-     * Transform a company model for list/show responses.
-     */
     private function transform(Company $c, bool $includeRelations = false): array
     {
         $userCount = DB::connection('mysql')
@@ -38,10 +35,10 @@ class CompanyController extends Controller
             ->count();
 
         $data = array_merge(
-            $c->toArray(), // ✅ FIXED (removed fresh())
+            $c->toArray(),
             [
                 'plan'       => $c->activeSubscription?->plan?->name,
-                'users'      => $userCount, // ✅ ADD THIS
+                'users'      => $userCount,
                 'created_at' => $this->formatDate($c->created_at),
                 'updated_at' => $this->formatDate($c->updated_at),
             ]
@@ -52,7 +49,6 @@ class CompanyController extends Controller
         return $data;
     }
 
-    // ── LIST ─────────────────────────────────────────────────────────────────
     public function index(Request $request): JsonResponse
     {
         $query = Company::with('activeSubscription.plan');
@@ -72,7 +68,6 @@ class CompanyController extends Controller
         return response()->json($companies);
     }
 
-    // ── SHOW ─────────────────────────────────────────────────────────────────
     public function show(Company $company): JsonResponse
     {
         $company->load(['users', 'subscriptions.plan', 'invoices', 'activeSubscription.plan']);
@@ -82,7 +77,6 @@ class CompanyController extends Controller
         $data['updated_at'] = $this->formatDate($company->updated_at);
         $data['plan']       = $company->activeSubscription?->plan?->name;
 
-        // Format dates for nested relations
         if (!empty($data['users'])) {
             $data['users'] = collect($data['users'])->map(function ($u) {
                 $u['created_at']    = $this->formatDate($u['created_at'] ?? null);
@@ -93,13 +87,11 @@ class CompanyController extends Controller
             })->toArray();
         }
 
-        // Never expose raw DB password
         unset($data['db_password']);
 
         return response()->json($data);
     }
 
-    // ── STORE ─────────────────────────────────────────────────────────────────
     public function store(Request $request): JsonResponse
     {
         $data = $request->validate([
@@ -116,7 +108,6 @@ class CompanyController extends Controller
         ]);
 
         try {
-            // ✅ 1. Create company FIRST
             $company = Company::create([
                 'name' => $data['name'],
                 'email' => $data['email'],
@@ -132,11 +123,9 @@ class CompanyController extends Controller
                 'description' => "Company {$company->name} created",
             ]);
 
-            // ✅ 2. Create DB
             $dbName = 'tenant_' . $company->id;
             DB::statement("CREATE DATABASE `$dbName`");
 
-            // ✅ 3. Update company DB info
             $company->update([
                 'db_host' => '127.0.0.1',
                 'db_name' => $dbName,
@@ -145,7 +134,6 @@ class CompanyController extends Controller
                 'db_port' => 3306,
             ]);
 
-            // ✅ 4. Switch connection
             config([
                 'database.connections.tenant' => [
                     'driver' => 'mysql',
@@ -162,11 +150,9 @@ class CompanyController extends Controller
             DB::purge('tenant');
             DB::reconnect('tenant');
 
-            // ✅ 5. Run schema
             $sql = file_get_contents(database_path('sql/tenant_schema.sql'));
             DB::connection('tenant')->unprepared($sql);
 
-            // ✅ 6. Create admin user
             $user = User::create([
                 'name' => $data['user_name'],
                 'email' => $data['user_email'],
@@ -186,7 +172,6 @@ class CompanyController extends Controller
         }
     }
 
-    // ── UPDATE ────────────────────────────────────────────────────────────────
     public function update(Request $request, Company $company): JsonResponse
     {
         $data = $request->validate([
@@ -195,7 +180,7 @@ class CompanyController extends Controller
             'phone'       => 'nullable|string|max:30',
             'address'     => 'nullable|string',
             'website'     => 'nullable|string|max:255',
-            'status'      => 'nullable|in:active,inactive', // 🔥 FIXED
+            'status'      => 'nullable|in:active,inactive',
 
             'db_host'     => 'nullable|string',
             'db_name'     => 'nullable|string',
@@ -208,7 +193,6 @@ class CompanyController extends Controller
 
         $dbMode = $request->input('db_mode');
 
-        // ✅ HANDLE DB UPDATE ONLY IF MODE IS EXTERNAL
         if ($dbMode === 'external') {
             try {
                 config([
@@ -230,17 +214,14 @@ class CompanyController extends Controller
             }
         }
 
-        // ✅ Prevent empty password overwrite
         if (isset($data['db_password']) && empty($data['db_password'])) {
             unset($data['db_password']);
         }
 
-        // 🔥 CRITICAL FIX: FORCE STATUS UPDATE
         if ($request->has('status')) {
             $company->status = $request->input('status');
         }
 
-        // ✅ Fill remaining fields
         $company->fill($data);
         $oldStatus = $company->status;
         $newStatus = $request->input('status');
@@ -262,7 +243,6 @@ class CompanyController extends Controller
             ]);
         }
 
-        // ✅ Return fresh updated data
         $company = $company->fresh();
 
         $result = $company->toArray();
@@ -274,7 +254,6 @@ class CompanyController extends Controller
         return response()->json($result);
     }
 
-    // ── DESTROY ───────────────────────────────────────────────────────────────
     public function destroy(Company $company): JsonResponse
     {
         $company->delete();
