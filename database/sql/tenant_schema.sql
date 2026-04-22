@@ -32,7 +32,11 @@ CREATE TABLE `bookings` (
   `contact_id` bigint DEFAULT NULL,
   `timezone` varchar(50) DEFAULT NULL,
   `cancelled_at` datetime DEFAULT NULL,
-  PRIMARY KEY (`id`)
+  `guest_token` varchar(64) DEFAULT NULL,         -- ADDED
+  `notes` text,                                   -- ADDED
+  `reminder_sent_at` timestamp NULL DEFAULT NULL, -- ADDED
+  PRIMARY KEY (`id`),
+  KEY `idx_guest_token` (`guest_token`)           -- ADDED
 ) ENGINE=MyISAM DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- booking_links
@@ -43,6 +47,11 @@ CREATE TABLE `booking_links` (
   `duration` int DEFAULT '30',
   `is_active` tinyint(1) DEFAULT '1',
   `buffer_time` int DEFAULT '0',
+  `event_name` varchar(100) DEFAULT NULL,         -- ADDED
+  `description` text,                             -- ADDED
+  `color` varchar(20) DEFAULT '#06b6d4',          -- ADDED
+  `buffer_minutes` tinyint DEFAULT '0',           -- ADDED
+  `meeting_type` varchar(10) DEFAULT 'jitsi',     -- ADDED
   PRIMARY KEY (`id`),
   UNIQUE KEY `slug` (`slug`)
 ) ENGINE=MyISAM DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;

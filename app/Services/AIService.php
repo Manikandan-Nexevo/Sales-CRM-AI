@@ -20,15 +20,12 @@ class AIService
     {
         $company = auth()->user()?->company;
 
-        // ✅ Resolve provider based on PLAN (not directly from DB)
         $this->provider = $this->resolveProviderFromPlan($company);
 
-        // ✅ Set API key dynamically
         $this->apiKey = $company && $company->ai_api_key
             ? decrypt($company->ai_api_key)
             : $this->getDefaultApiKey();
 
-        // ✅ Set API URL + model
         $this->setProviderConfig();
     }
 
@@ -39,42 +36,42 @@ class AIService
         }
 
         return match ($company->plan) {
-            'basic' => 'groq',          // free
-            'growth' => 'gemini',       // better quality
-            'pro' => 'openrouter',      // multiple models
-            'enterprise' => $company->ai_provider ?? 'groq', // custom
-            default => 'groq',
+            'basic'      => 'groq',
+            'growth'     => 'gemini',
+            'pro'        => 'openrouter',
+            'enterprise' => $company->ai_provider ?? 'groq',
+            default      => 'groq',
         };
     }
 
     private function getDefaultApiKey(): string
     {
         return match ($this->provider) {
-            'gemini' => env('GEMINI_API_KEY'),
+            'gemini'     => env('GEMINI_API_KEY'),
             'openrouter' => env('OPENROUTER_API_KEY'),
-            default => env('GROQ_API_KEY'),
+            default      => env('GROQ_API_KEY'),
         };
     }
 
     private function setProviderConfig()
     {
         switch ($this->provider) {
-
             case 'gemini':
                 $this->apiUrl = 'https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent';
-                $this->model = 'gemini-1.5-flash';
+                $this->model  = 'gemini-1.5-flash';
                 break;
 
             case 'openrouter':
                 $this->apiUrl = 'https://openrouter.ai/api/v1/chat/completions';
-                $this->model = 'mistral:free';
+                $this->model  = 'mistral:free';
                 break;
 
             default: // groq
                 $this->apiUrl = 'https://api.groq.com/openai/v1/chat/completions';
-                $this->model = 'llama-3.1-8b-instant';
+                $this->model  = 'llama-3.1-8b-instant';
         }
     }
+
     private function chat(string $systemPrompt, string $userMessage, int $maxTokens = 500): string
     {
         if (empty($this->apiKey)) {
@@ -85,12 +82,12 @@ class AIService
             $response = Http::withToken($this->apiKey)
                 ->timeout(30)
                 ->post($this->apiUrl, [
-                    'model' => $this->model,
+                    'model'    => $this->model,
                     'messages' => [
                         ['role' => 'system', 'content' => $systemPrompt],
-                        ['role' => 'user', 'content' => $userMessage],
+                        ['role' => 'user',   'content' => $userMessage],
                     ],
-                    'max_tokens' => $maxTokens,
+                    'max_tokens'  => $maxTokens,
                     'temperature' => 0.7,
                 ]);
 
@@ -110,19 +107,12 @@ class AIService
     {
         $interest = (int) $interest;
 
-        if ($interest >= 4) {
-            $label = 'High';
-        } elseif ($interest === 3) {
-            $label = 'Medium';
-        } elseif ($interest >= 1) {
-            $label = 'Low';
-        } else {
-            $label = 'Unknown';
-        }
+        if ($interest >= 4)      $label = 'High';
+        elseif ($interest === 3) $label = 'Medium';
+        elseif ($interest >= 1)  $label = 'Low';
+        else                     $label = 'Unknown';
 
-        return [
-            'label' => $label
-        ];
+        return ['label' => $label];
     }
 
     private function extractSignals(string $text): array
@@ -130,9 +120,9 @@ class AIService
         $text = strtolower($text);
 
         return [
-            'demo' => str_contains($text, 'demo'),
-            'pricing' => str_contains($text, 'price') || str_contains($text, 'cost'),
-            'budget' => str_contains($text, 'budget'),
+            'demo'     => str_contains($text, 'demo'),
+            'pricing'  => str_contains($text, 'price') || str_contains($text, 'cost'),
+            'budget'   => str_contains($text, 'budget'),
             'timeline' => str_contains($text, 'timeline') || str_contains($text, 'when'),
             'decision' => str_contains($text, 'decision') || str_contains($text, 'approve'),
         ];
@@ -143,26 +133,26 @@ class AIService
         string $transcript,
         string $contactName,
         string $company,
-        string $status = '',   // 🔥 renamed from outcome → status
-        int $interest = 0,
+        string $status = '',
+        int    $interest = 0,
         string $sentiment = ''
     ): string {
 
-        $notes = trim($notes);
+        $notes      = trim($notes);
         $transcript = trim($transcript);
-        $status = strtolower(trim($status));
-        $sentiment = strtolower(trim($sentiment));
+        $status     = strtolower(trim($status));
+        $sentiment  = strtolower(trim($sentiment));
+
         Log::info('AI INPUT DEBUG', [
             'contactName' => $contactName,
-            'company' => $company,
-            'status' => $status,
-            'interest' => $interest,
-            'sentiment' => $sentiment,
-            'notes' => $notes
+            'company'     => $company,
+            'status'      => $status,
+            'interest'    => $interest,
+            'sentiment'   => $sentiment,
+            'notes'       => $notes
         ]);
-        // -------------------------------
-        // 🚫 CASE 1: CALL NOT CONNECTED
-        // -------------------------------
+
+        // CASE 1: CALL NOT CONNECTED
         if (in_array($status, ['no_answer', 'no answer', 'busy', 'voicemail'])) {
 
             $systemPrompt = "
@@ -193,11 +183,8 @@ Notes:
             return $this->chat($systemPrompt, $userMessage, 250);
         }
 
-        // -------------------------------
-        // ⚠️ CASE 2: VERY WEAK INPUT
-        // -------------------------------
+        // CASE 2: VERY WEAK INPUT
         if (strlen($notes) < 5 && empty($transcript)) {
-
             return "Key Insights:
 - Very limited information captured during the call
 
@@ -217,9 +204,7 @@ Risk Level:
 - Medium due to lack of clarity";
         }
 
-        // -------------------------------
-        // ✅ CASE 3: CONNECTED (REAL AI)
-        // -------------------------------
+        // CASE 3: CONNECTED (REAL AI)
         $systemPrompt = "
 You are a senior B2B sales analyst.
 
@@ -277,18 +262,19 @@ Transcript:
 
         return $this->chat($systemPrompt, $userMessage, 700);
     }
+
     private function chatWithLowTemp(string $systemPrompt, string $userMessage, int $maxTokens = 500): string
     {
         try {
             $response = Http::withToken($this->apiKey)
                 ->timeout(30)
                 ->post($this->apiUrl, [
-                    'model' => $this->model,
+                    'model'    => $this->model,
                     'messages' => [
                         ['role' => 'system', 'content' => $systemPrompt],
-                        ['role' => 'user', 'content' => $userMessage],
+                        ['role' => 'user',   'content' => $userMessage],
                     ],
-                    'max_tokens' => $maxTokens,
+                    'max_tokens'  => $maxTokens,
                     'temperature' => 0.3,
                 ]);
 
@@ -298,10 +284,9 @@ Transcript:
         }
     }
 
-
     public function analyzeLead(Contact $contact): array
     {
-        $callCount = $contact->callLogs->count();
+        $callCount    = $contact->callLogs->count();
         $lastCallNote = $contact->callLogs->first()?->notes ?? 'No calls yet';
 
         $system = "You are a B2B sales analyst. Analyze leads for an IT company called Nexevo that provides software development and IT services.";
@@ -325,41 +310,18 @@ Return ONLY valid JSON.";
         $response = $this->chat($system, $user, 400);
 
         try {
-
-            $clean = preg_replace('/```json|```/', '', $response);
+            $clean    = preg_replace('/```json|```/', '', $response);
             $analysis = json_decode(trim($clean), true) ?? $this->defaultAnalysis();
+            $score    = $this->calculateLeadScore($contact);
 
-            /* --------------------------------------------------
-           CALCULATE CRM LEAD SCORE (REAL SCORING)
-        -------------------------------------------------- */
-
-            $score = $this->calculateLeadScore($contact);
-
-            /* --------------------------------------------------
-           UPDATE CONTACT AI SCORE
-        -------------------------------------------------- */
-
-            $contact->update([
-                'ai_score' => $score
-            ]);
-
-            /* --------------------------------------------------
-           ADD SCORE INTO RESPONSE
-        -------------------------------------------------- */
-
+            $contact->update(['ai_score' => $score]);
             $analysis['score'] = $score;
 
             return $analysis;
         } catch (\Exception $e) {
-
-            $analysis = $this->defaultAnalysis();
-
-            $score = $this->calculateLeadScore($contact);
-
-            $contact->update([
-                'ai_score' => $score
-            ]);
-
+            $analysis          = $this->defaultAnalysis();
+            $score             = $this->calculateLeadScore($contact);
+            $contact->update(['ai_score' => $score]);
             $analysis['score'] = $score;
 
             return $analysis;
@@ -370,7 +332,6 @@ Return ONLY valid JSON.";
     {
         $query = Contact::query();
 
-        // Admin can see all contacts
         if (!$user->can('admin')) {
             $query->where('assigned_to', $user->id);
         }
@@ -401,9 +362,9 @@ Return ONLY valid JSON.";
         $response = $this->chat($system, $user, 400);
 
         try {
-            $bodyText = trim(preg_replace('/```.*?```/s', '', $response));
+            $bodyText   = trim(preg_replace('/```.*?```/s', '', $response));
             $paragraphs = explode("\n", $bodyText);
-            $htmlBody = '';
+            $htmlBody   = '';
 
             foreach ($paragraphs as $line) {
                 if (trim($line) !== '') {
@@ -411,56 +372,47 @@ Return ONLY valid JSON.";
                 }
             }
 
-            $subject = "Following up - Nexevo";
-
-
-
             return [
-                'subject' => $subject,
-                'body' => $bodyText
+                'subject' => 'Following up - Nexevo',
+                'body'    => $bodyText
             ];
         } catch (\Exception $e) {
             Log::error('Email generation error: ' . $e->getMessage());
 
             return [
                 'subject' => 'Following up - Nexevo',
-                'body' => $response
+                'body'    => $response
             ];
         }
     }
 
     public function suggestResponse(string $context, ?Contact $contact): string
     {
-        $system = "You are a sales coach for Nexevo IT company. Provide quick, effective response suggestions for sales reps during live calls or messaging.";
+        $system      = "You are a sales coach for Nexevo IT company. Provide quick, effective response suggestions for sales reps during live calls or messaging.";
         $contactInfo = $contact ? "{$contact->name} from {$contact->company} ({$contact->industry})" : "Unknown contact";
-        $user = "Sales rep is talking to: {$contactInfo}\nContext: {$context}\n\nSuggest a brief, effective response (2-3 sentences max).";
+        $user        = "Sales rep is talking to: {$contactInfo}\nContext: {$context}\n\nSuggest a brief, effective response (2-3 sentences max).";
 
         return $this->chat($system, $user, 200);
     }
 
     public function suggestNextAction(Contact $contact): array
     {
-        $calls = $contact->callLogs ?? collect();
-
-        $lastCall = $calls->first();
-        $lastCallStatus = $lastCall->status ?? 'none';
-        $lastCallTime = $lastCall?->created_at;
-
-        $interest = $calls->avg('interest_level') ?? 0;
-        $sentiment = $calls->pluck('sentiment')->filter()->last();
-
-        $hoursSinceLastCall = $lastCallTime
-            ? now()->diffInHours($lastCallTime)
-            : 999;
+        $calls           = $contact->callLogs ?? collect();
+        $lastCall        = $calls->first();
+        $lastCallStatus  = $lastCall->status ?? 'none';
+        $lastCallTime    = $lastCall?->created_at;
+        $interest        = $calls->avg('interest_level') ?? 0;
+        $sentiment       = $calls->pluck('sentiment')->filter()->last();
+        $hoursSinceLastCall = $lastCallTime ? now()->diffInHours($lastCallTime) : 999;
 
         if ($interest >= 4 && $sentiment === 'positive') {
             return [
-                'action' => 'Schedule demo or close deal call',
-                'type' => 'call',
-                'timing' => 'Immediate',
-                'priority' => 'high',
+                'action'     => 'Schedule demo or close deal call',
+                'type'       => 'call',
+                'timing'     => 'Immediate',
+                'priority'   => 'high',
                 'confidence' => rand(85, 95) . '%',
-                'reason' => [
+                'reason'     => [
                     "High interest level from recent calls",
                     "Positive sentiment detected",
                     "Strong conversion probability"
@@ -470,12 +422,12 @@ Return ONLY valid JSON.";
 
         if ($lastCallStatus === 'no_answer' && $hoursSinceLastCall > 24) {
             return [
-                'action' => 'Retry call or send follow-up email',
-                'type' => 'call',
-                'timing' => 'Today',
-                'priority' => 'medium',
+                'action'     => 'Retry call or send follow-up email',
+                'type'       => 'call',
+                'timing'     => 'Today',
+                'priority'   => 'medium',
                 'confidence' => rand(70, 85) . '%',
-                'reason' => [
+                'reason'     => [
                     "Previous call was not answered",
                     "No follow-up in last 24 hours",
                     "Re-engagement required"
@@ -485,12 +437,12 @@ Return ONLY valid JSON.";
 
         if ($interest <= 2) {
             return [
-                'action' => 'Send nurturing email with value proposition',
-                'type' => 'email',
-                'timing' => 'This week',
-                'priority' => 'low',
+                'action'     => 'Send nurturing email with value proposition',
+                'type'       => 'email',
+                'timing'     => 'This week',
+                'priority'   => 'low',
                 'confidence' => rand(60, 75) . '%',
-                'reason' => [
+                'reason'     => [
                     "Low engagement detected",
                     "Lead not yet convinced",
                     "Needs nurturing content"
@@ -499,12 +451,12 @@ Return ONLY valid JSON.";
         }
 
         return [
-            'action' => 'Follow up via phone',
-            'type' => 'call',
-            'timing' => 'Tomorrow',
-            'priority' => 'medium',
+            'action'     => 'Follow up via phone',
+            'type'       => 'call',
+            'timing'     => 'Tomorrow',
+            'priority'   => 'medium',
             'confidence' => rand(75, 90) . '%',
-            'reason' => [
+            'reason'     => [
                 "Moderate engagement signals",
                 "Follow-up needed to progress lead",
                 "No recent action taken"
@@ -517,10 +469,141 @@ Return ONLY valid JSON.";
         $cmd = strtolower(trim($command));
 
         /*
-    |--------------------------------------------------------------------------
-    | NAVIGATION COMMANDS
-    |--------------------------------------------------------------------------
-    */
+        |--------------------------------------------------------------------------
+        | CONVERSATIONAL / SOCIAL MESSAGES
+        | Catches greetings, thanks, farewells, and small-talk before CRM logic.
+        | The frontend already handles most of these without hitting the server,
+        | but this block protects against voice/API clients that bypass the frontend.
+        |--------------------------------------------------------------------------
+        */
+
+        // Helper: check if $cmd exactly equals or contains any phrase in $list
+        $matches = fn(array $list): bool => collect($list)->contains(
+            fn($phrase) => $cmd === $phrase || str_contains($cmd, $phrase)
+        );
+
+        // ── Greetings ──
+        if ($matches([
+            'hi',
+            'hey',
+            'hello',
+            'hiya',
+            'howdy',
+            'sup',
+            "what's up",
+            'whats up',
+            'good morning',
+            'good afternoon',
+            'good evening',
+            'morning',
+            'afternoon',
+            'evening'
+        ])) {
+            $replies = [
+                "Hey {$user->name}! 👋 How can I help you today?",
+                "Hello! Ready to help with your pipeline. Ask me anything.",
+                "Hi there! What do you need — leads, deals, or follow-ups?",
+            ];
+            return ['action' => 'none', 'params' => [], 'response' => $replies[array_rand($replies)]];
+        }
+
+        // ── How are you ──
+        if ($matches(['how are you', 'how are you doing', "how's it going", 'how do you do'])) {
+            $replies = [
+                "I'm doing great, thanks for asking! 😊 Ready to help with your sales pipeline.",
+                "All systems go! How can I help you today?",
+                "Feeling sharp and ready to help. What's on your mind?",
+            ];
+            return ['action' => 'none', 'params' => [], 'response' => $replies[array_rand($replies)]];
+        }
+
+        // ── Thanks ──
+        if ($matches(['thank you', 'thanks', 'thank you so much', 'thanks a lot', 'cheers', 'ty'])) {
+            $replies = [
+                "You're welcome! Anything else I can help with?",
+                "Happy to help! What's next?",
+                "Of course! Let me know if you need anything else.",
+            ];
+            return ['action' => 'none', 'params' => [], 'response' => $replies[array_rand($replies)]];
+        }
+
+        // ── Farewells ──
+        if ($matches(['bye', 'goodbye', 'see you', 'see ya', 'later', 'cya', 'take care'])) {
+            $replies = [
+                "Goodbye! Have a productive day! 👋",
+                "See you later! Keep closing those deals! 💪",
+                "Take care! I'll be here when you need me.",
+            ];
+            return ['action' => 'none', 'params' => [], 'response' => $replies[array_rand($replies)]];
+        }
+
+        // ── Help / Capabilities ──
+        if ($matches(['help', 'what can you do', 'what do you do', 'capabilities', 'commands', 'options'])) {
+            return [
+                'action'   => 'none',
+                'params'   => [],
+                'response' => "Here's what I can do:\n\n"
+                    . "📊 Daily Briefing — KPI snapshot\n"
+                    . "🔥 Show hot leads\n"
+                    . "🎯 Which lead should I call next\n"
+                    . "📈 Show best leads\n"
+                    . "❄️  Show inactive leads\n"
+                    . "💰 Deal probability\n"
+                    . "⚠️  Which deals are at risk\n"
+                    . "📅 Who should I follow up today\n"
+                    . "👥 Open contacts\n"
+                    . "📞 Open call logs\n"
+                    . "🗓️  Open followups\n"
+                    . "🏠 Open dashboard\n\n"
+                    . "You can also say a contact's name to open their profile.",
+            ];
+        }
+
+        // ── Acknowledgements & small talk ──
+        if ($matches([
+            'ok',
+            'okay',
+            'got it',
+            'noted',
+            'alright',
+            'sure',
+            'understood',
+            'nice',
+            'cool',
+            'awesome',
+            'great',
+            'amazing',
+            'fantastic',
+            'excellent',
+            'test',
+            'testing',
+            'ping',
+            'are you there',
+            'you there',
+            'who are you',
+            'what are you',
+            'are you an ai',
+            'are you a bot'
+        ])) {
+            $replies = [
+                "Got it! What would you like to do next?",
+                "All good! What's next on your list?",
+                "I'm here and listening. What do you need?",
+            ];
+            return ['action' => 'none', 'params' => [], 'response' => $replies[array_rand($replies)]];
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | END CONVERSATIONAL BLOCK — CRM commands follow below
+        |--------------------------------------------------------------------------
+        */
+
+        /*
+        |--------------------------------------------------------------------------
+        | NAVIGATION COMMANDS
+        |--------------------------------------------------------------------------
+        */
 
         if (str_contains($cmd, 'open contacts') || str_contains($cmd, 'show contacts')) {
             return [
@@ -555,62 +638,52 @@ Return ONLY valid JSON.";
         }
 
         /*
-|--------------------------------------------------------------------------
-| SHOW HOT LEADS
-|--------------------------------------------------------------------------
-*/
+        |--------------------------------------------------------------------------
+        | SHOW HOT LEADS
+        |--------------------------------------------------------------------------
+        */
 
         if (
             str_contains($cmd, 'hot leads') ||
             str_contains($cmd, 'show hot leads') ||
             str_contains($cmd, 'high priority leads')
         ) {
-
             $leads = $this->contactQuery($user)
                 ->where('priority', 'high')
                 ->take(5)
                 ->get();
 
             if ($leads->isEmpty()) {
-                return [
-                    'action' => 'none',
-                    'params' => [],
-                    'response' => 'You currently have no high priority leads.'
-                ];
+                return ['action' => 'none', 'params' => [], 'response' => 'You currently have no high priority leads.'];
             }
 
             $names = $leads->pluck('name')->implode(', ');
 
             return [
-                'action' => 'navigate',
-                'params' => ['page' => 'contacts'],
+                'action'   => 'navigate',
+                'params'   => ['page' => 'contacts'],
                 'response' => "You have {$leads->count()} hot leads: {$names}. I'm opening the contacts list."
             ];
         }
 
         /*
-|--------------------------------------------------------------------------
-| BEST LEADS
-|--------------------------------------------------------------------------
-*/
+        |--------------------------------------------------------------------------
+        | BEST LEADS
+        |--------------------------------------------------------------------------
+        */
 
         if (
             str_contains($cmd, 'best leads') ||
             str_contains($cmd, 'top leads') ||
             str_contains($cmd, 'highest scoring leads')
         ) {
-
             $leads = $this->contactQuery($user)
                 ->orderByDesc('ai_score')
                 ->take(3)
                 ->get();
 
             if ($leads->isEmpty()) {
-                return [
-                    'action' => 'none',
-                    'params' => [],
-                    'response' => 'No leads available.'
-                ];
+                return ['action' => 'none', 'params' => [], 'response' => 'No leads available.'];
             }
 
             $text = "Your top leads right now are:\n\n";
@@ -620,24 +693,23 @@ Return ONLY valid JSON.";
             }
 
             return [
-                'action' => 'navigate',
-                'params' => ['page' => 'contacts'],
+                'action'   => 'navigate',
+                'params'   => ['page' => 'contacts'],
                 'response' => $text
             ];
         }
 
         /*
-|--------------------------------------------------------------------------
-| INACTIVE LEADS
-|--------------------------------------------------------------------------
-*/
+        |--------------------------------------------------------------------------
+        | INACTIVE LEADS
+        |--------------------------------------------------------------------------
+        */
 
         if (
             str_contains($cmd, 'inactive leads') ||
             str_contains($cmd, 'cold leads') ||
             str_contains($cmd, 'not contacted')
         ) {
-
             $leads = $this->contactQuery($user)
                 ->whereDoesntHave('callLogs', function ($q) {
                     $q->where('created_at', '>=', now()->subDays(7));
@@ -646,89 +718,66 @@ Return ONLY valid JSON.";
                 ->get();
 
             if ($leads->isEmpty()) {
-                return [
-                    'action' => 'none',
-                    'params' => [],
-                    'response' => 'All leads have been contacted recently. Good job!'
-                ];
+                return ['action' => 'none', 'params' => [], 'response' => 'All leads have been contacted recently. Good job!'];
             }
 
             $names = $leads->pluck('name')->implode(', ');
 
             return [
-                'action' => 'navigate',
-                'params' => ['page' => 'contacts'],
+                'action'   => 'navigate',
+                'params'   => ['page' => 'contacts'],
                 'response' => "{$leads->count()} leads haven't been contacted in over a week: {$names}."
             ];
         }
 
         /*
-|--------------------------------------------------------------------------
-| FOLLOWUPS TODAY
-|--------------------------------------------------------------------------
-*/
+        |--------------------------------------------------------------------------
+        | FOLLOWUPS TODAY
+        |--------------------------------------------------------------------------
+        */
 
         if (
             str_contains($cmd, 'follow ups today') ||
             str_contains($cmd, 'followups today') ||
             str_contains($cmd, 'who should i follow up')
         ) {
-
             $count = $user->followUps()
                 ->whereDate('scheduled_at', today())
                 ->count();
 
             if ($count === 0) {
-                return [
-                    'action' => 'none',
-                    'params' => [],
-                    'response' => 'You have no follow-ups scheduled for today.'
-                ];
+                return ['action' => 'none', 'params' => [], 'response' => 'You have no follow-ups scheduled for today.'];
             }
 
             return [
-                'action' => 'navigate',
-                'params' => ['page' => 'followups'],
+                'action'   => 'navigate',
+                'params'   => ['page' => 'followups'],
                 'response' => "You have {$count} follow-ups scheduled today. Opening your follow-ups."
             ];
         }
 
         /*
-|--------------------------------------------------------------------------
-| DEALS AT RISK
-|--------------------------------------------------------------------------
-*/
+        |--------------------------------------------------------------------------
+        | DEALS AT RISK
+        |--------------------------------------------------------------------------
+        */
 
         if (
             str_contains($cmd, 'deals at risk') ||
             str_contains($cmd, 'risk deals') ||
             str_contains($cmd, 'at risk')
         ) {
-
             $leads = $this->contactQuery($user)
                 ->whereNotIn('status', ['closed_won', 'closed_lost'])
                 ->get()
                 ->filter(function ($lead) {
-
                     $last = $this->getLastContactDate($lead);
-
-                    $days = $last
-                        ? now()->diffInDays($last)
-                        : 30;
-
+                    $days = $last ? now()->diffInDays($last) : 30;
                     $risk = false;
 
-                    if ($days > 14) {
-                        $risk = true;
-                    }
-
-                    if ($days > 7 && in_array($lead->status, ['hot', 'proposal'])) {
-                        $risk = true;
-                    }
-
-                    if ($lead->ai_score < 50) {
-                        $risk = true;
-                    }
+                    if ($days > 14) $risk = true;
+                    if ($days > 7 && in_array($lead->status, ['hot', 'proposal'])) $risk = true;
+                    if ($lead->ai_score < 50) $risk = true;
 
                     return $risk;
                 })
@@ -736,22 +785,14 @@ Return ONLY valid JSON.";
                 ->take(5);
 
             if ($leads->isEmpty()) {
-                return [
-                    'action' => 'none',
-                    'params' => [],
-                    'response' => 'No deals appear to be at risk right now.'
-                ];
+                return ['action' => 'none', 'params' => [], 'response' => 'No deals appear to be at risk right now.'];
             }
 
             $text = "⚠ These deals may be at risk:\n\n";
 
             foreach ($leads as $lead) {
-
                 $last = $this->getLastContactDate($lead);
-
-                $days = $last
-                    ? now()->diffInDays($last)
-                    : 'never';
+                $days = $last ? now()->diffInDays($last) : 'never';
 
                 $text .= "{$lead->name} from {$lead->company}\n";
                 $text .= "AI score: {$lead->ai_score}\n";
@@ -761,27 +802,25 @@ Return ONLY valid JSON.";
             $text .= "I recommend reaching out to re-engage these leads.";
 
             return [
-                'action' => 'navigate',
-                'params' => ['page' => 'contacts'],
+                'action'   => 'navigate',
+                'params'   => ['page' => 'contacts'],
                 'response' => $text
             ];
         }
+
         /*
-    |--------------------------------------------------------------------------
-    | DAILY BRIEFING
-    |--------------------------------------------------------------------------
-    */
+        |--------------------------------------------------------------------------
+        | DAILY BRIEFING
+        |--------------------------------------------------------------------------
+        */
 
         if (
             str_contains($cmd, 'brief') ||
             str_contains($cmd, 'daily briefing') ||
             str_contains($cmd, 'today update')
         ) {
-
-            $data = $this->generateDailyBriefing($user);
-
+            $data     = $this->generateDailyBriefing($user);
             $response = "Good morning {$user->name}. Here's your CRM update.\n\n";
-
             $response .= "You have {$data['followups_today']} follow-ups scheduled today";
 
             if ($data['overdue_followups'] > 0) {
@@ -789,17 +828,14 @@ Return ONLY valid JSON.";
             }
 
             $response .= "\n\nYou've logged {$data['calls_today']} calls today.";
-
             $response .= "\n\nThere are {$data['hot_leads']} hot leads in the pipeline.";
 
             if ($data['inactive_leads'] > 0) {
                 $response .= "\n\n{$data['inactive_leads']} leads haven't been contacted in 7 days.";
             }
 
-            if ($data['top_rep']) {
-                if (!empty($data['top_rep'])) {
-                    $response .= "\n\nTop performer this week is {$data['top_rep']} with {$data['top_rep_score']} activities.";
-                }
+            if (!empty($data['top_rep'])) {
+                $response .= "\n\nTop performer this week is {$data['top_rep']} with {$data['top_rep_score']} activities.";
             }
 
             if ($data['hot_leads'] > 0) {
@@ -811,68 +847,54 @@ Return ONLY valid JSON.";
             }
 
             return [
-                'action' => 'daily_briefing',
-                'params' => $data,
+                'action'   => 'daily_briefing',
+                'params'   => $data,
                 'response' => $response
             ];
         }
 
         /*
-|--------------------------------------------------------------------------
-| SUMMARIZE CALL NOTES
-|--------------------------------------------------------------------------
-*/
+        |--------------------------------------------------------------------------
+        | SUMMARIZE CALL NOTES
+        |--------------------------------------------------------------------------
+        */
 
         if (
             str_contains($cmd, 'summarize call') ||
             str_contains($cmd, 'summarize my call') ||
             str_contains($cmd, 'call summary')
         ) {
-
             return [
-                'action' => 'open_call_log',
-                'params' => [
-                    'mode' => 'ai_summary'
-                ],
+                'action'   => 'open_call_log',
+                'params'   => ['mode' => 'ai_summary'],
                 'response' => 'Please paste your call notes and I will summarize them.'
             ];
         }
 
         /*
-|--------------------------------------------------------------------------
-| DEAL PROBABILITY
-|--------------------------------------------------------------------------
-*/
+        |--------------------------------------------------------------------------
+        | DEAL PROBABILITY
+        |--------------------------------------------------------------------------
+        */
 
         if (
             str_contains($cmd, 'deal probability') ||
             str_contains($cmd, 'chance to close') ||
             str_contains($cmd, 'closing chance')
         ) {
-
             $lead = $this->getNextBestLead($user);
 
             if (!$lead) {
-                return [
-                    'action' => 'none',
-                    'params' => [],
-                    'response' => 'No leads available for prediction.'
-                ];
+                return ['action' => 'none', 'params' => [], 'response' => 'No leads available for prediction.'];
             }
 
             if (in_array($lead->status, ['closed_won', 'closed_lost'])) {
-
-                return [
-                    'action' => 'none',
-                    'params' => [],
-                    'response' => "This lead is already {$lead->status}. No probability prediction is needed."
-                ];
+                return ['action' => 'none', 'params' => [], 'response' => "This lead is already {$lead->status}. No probability prediction is needed."];
             }
 
             $probability = $this->predictDealProbability($lead);
-
-            $response = "The lead most likely to close is {$lead->name} from {$lead->company}.\n\n";
-            $response .= "Estimated closing probability: {$probability}%.\n\n";
+            $response    = "The lead most likely to close is {$lead->name} from {$lead->company}.\n\n";
+            $response   .= "Estimated closing probability: {$probability}%.\n\n";
 
             if ($probability > 75) {
                 $response .= "This is a strong opportunity. I recommend scheduling a demo or proposal.";
@@ -883,16 +905,17 @@ Return ONLY valid JSON.";
             }
 
             return [
-                'action' => 'open_contact',
-                'params' => ['contact_id' => $lead->id],
+                'action'   => 'open_contact',
+                'params'   => ['contact_id' => $lead->id],
                 'response' => $response
             ];
         }
+
         /*
-|--------------------------------------------------------------------------
-| NEXT BEST LEAD
-|--------------------------------------------------------------------------
-*/
+        |--------------------------------------------------------------------------
+        | NEXT BEST LEAD
+        |--------------------------------------------------------------------------
+        */
 
         if (
             str_contains($cmd, 'which lead') ||
@@ -900,19 +923,13 @@ Return ONLY valid JSON.";
             str_contains($cmd, 'next lead') ||
             str_contains($cmd, 'next call')
         ) {
-
             $lead = $this->getNextBestLead($user);
 
             if (!$lead) {
-                return [
-                    'action' => 'none',
-                    'params' => [],
-                    'response' => 'You currently have no leads that need attention.'
-                ];
+                return ['action' => 'none', 'params' => [], 'response' => 'You currently have no leads that need attention.'];
             }
 
-            $days = $lead->last_contact_days ?? 0;
-
+            $days     = $lead->last_contact_days ?? 0;
             $response = "You should call {$lead->name} from {$lead->company} next.\n\n";
 
             if ($lead->priority === 'high') {
@@ -926,28 +943,24 @@ Return ONLY valid JSON.";
             $response .= "\n\nReaching out now could improve conversion chances.";
 
             return [
-                'action' => 'open_contact',
-                'params' => [
-                    'contact_id' => $lead->id
-                ],
+                'action'   => 'open_contact',
+                'params'   => ['contact_id' => $lead->id],
                 'response' => $response
             ];
         }
 
         /*
-    |--------------------------------------------------------------------------
-    | CONTACT CLARIFICATION
-    |--------------------------------------------------------------------------
-    */
+        |--------------------------------------------------------------------------
+        | CONTACT CLARIFICATION
+        |--------------------------------------------------------------------------
+        */
 
         if (session()->has('ai_contact_options')) {
-
-            $options = Contact::whereIn('id', session('ai_contact_options'))->get();
+            $options  = Contact::whereIn('id', session('ai_contact_options'))->get();
             $original = session('ai_pending_command');
 
             foreach ($options as $c) {
-
-                $name = strtolower($c->name);
+                $name  = strtolower($c->name);
                 $parts = explode(' ', $name);
                 $first = $parts[0] ?? '';
                 $last  = $parts[1] ?? '';
@@ -957,11 +970,7 @@ Return ONLY valid JSON.";
                     str_contains($cmd, $first) ||
                     ($last && str_contains($cmd, $last))
                 ) {
-
-                    session()->forget([
-                        'ai_contact_options',
-                        'ai_pending_command'
-                    ]);
+                    session()->forget(['ai_contact_options', 'ai_pending_command']);
 
                     $updatedCommand = preg_replace(
                         '/\b' . preg_quote($first, '/') . '\b/i',
@@ -974,48 +983,37 @@ Return ONLY valid JSON.";
             }
 
             return [
-                'action' => 'clarify_contact',
-                'params' => [
-                    'options' => $options->pluck('name')
-                ],
+                'action'   => 'clarify_contact',
+                'params'   => ['options' => $options->pluck('name')],
                 'response' => 'Please select one of the listed contacts.'
             ];
         }
 
         /*
-    |--------------------------------------------------------------------------
-    | CONTACT MATCHING (FIXED)
-    |--------------------------------------------------------------------------
-    */
+        |--------------------------------------------------------------------------
+        | CONTACT MATCHING
+        |--------------------------------------------------------------------------
+        */
 
-        $contacts = Contact::select('id', 'name')->get();
-
-        $matches = [];
+        $contacts    = Contact::select('id', 'name')->get();
+        $matches     = [];
         $firstMatches = [];
 
         foreach ($contacts as $c) {
-
-            $name = strtolower($c->name);
+            $name  = strtolower($c->name);
             $parts = explode(' ', $name);
-
             $first = $parts[0] ?? '';
             $last  = $parts[1] ?? '';
-
-            /* FULL NAME MATCH (highest priority) */
 
             if (str_contains($cmd, $name)) {
                 $matches[] = $c;
                 continue;
             }
 
-            /* FIRST NAME MATCH (fallback) */
-
             if ($first && str_contains($cmd, $first)) {
                 $firstMatches[] = $c;
             }
         }
-
-        /* If full name found, ignore first-name matches */
 
         if (count($matches) === 0) {
             $matches = $firstMatches;
@@ -1024,40 +1022,37 @@ Return ONLY valid JSON.";
         $matches = collect($matches)->unique('id')->values();
 
         /*
-    |--------------------------------------------------------------------------
-    | MULTIPLE MATCHES
-    |--------------------------------------------------------------------------
-    */
+        |--------------------------------------------------------------------------
+        | MULTIPLE MATCHES
+        |--------------------------------------------------------------------------
+        */
 
         if ($matches->count() > 1) {
-
             session([
-                'ai_pending_command' => $command,
-                'ai_contact_options' => $matches->pluck('id')->toArray()
+                'ai_pending_command'  => $command,
+                'ai_contact_options'  => $matches->pluck('id')->toArray()
             ]);
 
             return [
-                'action' => 'clarify_contact',
-                'params' => [
-                    'options' => $matches->pluck('name')
-                ],
+                'action'   => 'clarify_contact',
+                'params'   => ['options' => $matches->pluck('name')],
                 'response' => 'I found multiple contacts: ' . $matches->pluck('name')->implode(', ') . '. Which one?'
             ];
         }
 
         /*
-    |--------------------------------------------------------------------------
-    | SINGLE CONTACT
-    |--------------------------------------------------------------------------
-    */
+        |--------------------------------------------------------------------------
+        | SINGLE CONTACT
+        |--------------------------------------------------------------------------
+        */
 
         $contact = $matches->first();
 
         /*
-    |--------------------------------------------------------------------------
-    | FOLLOWUP / CALL
-    |--------------------------------------------------------------------------
-    */
+        |--------------------------------------------------------------------------
+        | FOLLOWUP / CALL
+        |--------------------------------------------------------------------------
+        */
 
         if (
             str_contains($cmd, 'call') ||
@@ -1065,65 +1060,39 @@ Return ONLY valid JSON.";
             str_contains($cmd, 'meeting') ||
             str_contains($cmd, 'schedule')
         ) {
-
             if (!$contact) {
-                return [
-                    'action' => 'contact_not_found',
-                    'params' => [],
-                    'response' => 'Contact not found in CRM.'
-                ];
+                return ['action' => 'contact_not_found', 'params' => [], 'response' => 'Contact not found in CRM.'];
             }
 
             $scheduled = now();
 
-            if (str_contains($cmd, 'tomorrow')) {
-                $scheduled = now()->addDay();
-            }
-
-            if (str_contains($cmd, 'today')) {
-                $scheduled = now();
-            }
+            if (str_contains($cmd, 'tomorrow')) $scheduled = now()->addDay();
+            if (str_contains($cmd, 'today'))    $scheduled = now();
 
             if (preg_match('/(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?|am|pm)?/i', $cmd, $m)) {
-
-                $hour = (int)$m[1];
+                $hour   = (int)$m[1];
                 $minute = isset($m[2]) ? (int)$m[2] : 0;
+                $period = str_replace('.', '', strtolower($m[3] ?? ''));
 
-                $period = strtolower($m[3] ?? '');
-
-                // Normalize period
-                $period = str_replace('.', '', $period);
-
-                if ($period === 'pm' && $hour < 12) {
-                    $hour += 12;
-                }
-
-                if ($period === 'am' && $hour == 12) {
-                    $hour = 0;
-                }
+                if ($period === 'pm' && $hour < 12) $hour += 12;
+                if ($period === 'am' && $hour == 12) $hour = 0;
 
                 $scheduled->setTime($hour, $minute, 0);
             }
 
-
-
-            /* -----------------------------
-   EXTRACT NOTES FROM COMMAND
-------------------------------*/
-
             $notes = '';
-
             if (preg_match('/(?:note|notes|with notes|add note|message)\s+(.*)/i', $cmd, $match)) {
                 $notes = ucfirst(trim($match[1]));
             }
+
             return [
-                'action' => 'open_followup',
-                'params' => [
-                    'contact_id' => $contact->id,
+                'action'   => 'open_followup',
+                'params'   => [
+                    'contact_id'   => $contact->id,
                     'contact_name' => $contact->name,
-                    'type' => 'call',
-                    'subject' => "Call with {$contact->name}",
-                    'message' => $notes,
+                    'type'         => 'call',
+                    'subject'      => "Call with {$contact->name}",
+                    'message'      => $notes,
                     'scheduled_at' => $scheduled->toDateTimeString()
                 ],
                 'response' => "Scheduling call with {$contact->name}."
@@ -1131,36 +1100,31 @@ Return ONLY valid JSON.";
         }
 
         /*
-    |--------------------------------------------------------------------------
-    | OPEN CONTACT
-    |--------------------------------------------------------------------------
-    */
+        |--------------------------------------------------------------------------
+        | OPEN CONTACT
+        |--------------------------------------------------------------------------
+        */
 
         if ($contact) {
-
             return [
-                'action' => 'open_contact',
-                'params' => [
-                    'contact_id' => $contact->id,
-                    'contact_name' => $contact->name
-                ],
+                'action'   => 'open_contact',
+                'params'   => ['contact_id' => $contact->id, 'contact_name' => $contact->name],
                 'response' => "Opening {$contact->name}'s contact."
             ];
         }
 
         /*
-    |--------------------------------------------------------------------------
-    | UNKNOWN
-    |--------------------------------------------------------------------------
-    */
+        |--------------------------------------------------------------------------
+        | UNKNOWN
+        |--------------------------------------------------------------------------
+        */
 
         return [
-            'action' => 'unknown',
-            'params' => [],
-            'response' => 'Sorry, I could not understand.'
+            'action'   => 'unknown',
+            'params'   => [],
+            'response' => "I'm not sure I understood that. Try saying 'help' to see what I can do, or use one of the quick commands."
         ];
     }
-
 
     public function generateFollowUpFromCall(Contact $contact, string $summary): string
     {
@@ -1183,6 +1147,7 @@ Nexevo Sales Team";
 
         return $this->chat($system, $user, 300);
     }
+
     private function getNextBestLead(User $user)
     {
         $query = $this->contactQuery($user)
@@ -1191,21 +1156,19 @@ Nexevo Sales Team";
 
         $lead = $query
             ->orderByRaw("
-            CASE status
-                WHEN 'proposal' THEN 5
-                WHEN 'hot' THEN 4
-                WHEN 'qualified' THEN 3
-                WHEN 'interested' THEN 2
-                WHEN 'contacted' THEN 1
-                ELSE 0
-            END DESC
-        ")
+                CASE status
+                    WHEN 'proposal'   THEN 5
+                    WHEN 'hot'        THEN 4
+                    WHEN 'qualified'  THEN 3
+                    WHEN 'interested' THEN 2
+                    WHEN 'contacted'  THEN 1
+                    ELSE 0
+                END DESC
+            ")
             ->orderByDesc('ai_score')
             ->first();
 
-        if (!$lead) {
-            return null;
-        }
+        if (!$lead) return null;
 
         if ($lead->call_logs_max_created_at) {
             $lead->last_contact_days = now()->diffInDays($lead->call_logs_max_created_at);
@@ -1213,79 +1176,38 @@ Nexevo Sales Team";
 
         return $lead;
     }
-    /*
-    |--------------------------------------------------------------------------
-    | LAST CONTACT DATE
-    |--------------------------------------------------------------------------
-    */
 
     private function getLastContactDate(Contact $contact)
     {
-        $lastCall = $contact->callLogs()->max('created_at');
-
+        $lastCall     = $contact->callLogs()->max('created_at');
         $lastFollowup = $contact->followUps()->max('created_at');
+        $lastEmail    = method_exists($contact, 'emails') ? $contact->emails()->max('created_at') : null;
 
-        $lastEmail = method_exists($contact, 'emails')
-            ? $contact->emails()->max('created_at')
-            : null;
-
-        return collect([$lastCall, $lastFollowup, $lastEmail])
-            ->filter()
-            ->max();
+        return collect([$lastCall, $lastFollowup, $lastEmail])->filter()->max();
     }
 
     private function calculateLeadScore(Contact $contact): int
     {
         $score = 0;
 
-        if ($contact->priority === 'high') {
-            $score += 30;
-        }
-
-        if ($contact->priority === 'medium') {
-            $score += 15;
-        }
-
-        if ($contact->status === 'interested') {
-            $score += 25;
-        }
-
-        if ($contact->status === 'hot') {
-            $score += 35;
-        }
+        if ($contact->priority === 'high')   $score += 30;
+        if ($contact->priority === 'medium') $score += 15;
+        if ($contact->status === 'interested') $score += 25;
+        if ($contact->status === 'hot')        $score += 35;
 
         $callCount = $contact->callLogs()->count();
-
-        if ($callCount >= 3) {
-            $score += 20;
-        }
-
-        if ($callCount >= 5) {
-            $score += 10;
-        }
+        if ($callCount >= 3) $score += 20;
+        if ($callCount >= 5) $score += 10;
 
         $lastCall = $contact->callLogs()->latest()->first();
-
         if ($lastCall) {
-
             $days = now()->diffInDays($lastCall->created_at);
-
-            if ($days <= 2) {
-                $score += 20;
-            }
-
-            if ($days > 7) {
-                $score -= 15;
-            }
+            if ($days <= 2) $score += 20;
+            if ($days > 7)  $score -= 15;
         }
 
-        $pendingFollowups = $contact->followUps()
-            ->where('status', 'pending')
-            ->count();
-
-        if ($pendingFollowups > 0) {
-            $score += 10;
-        }
+        $pendingFollowups = $contact->followUps()->where('status', 'pending')->count();
+        if ($pendingFollowups > 0) $score += 10;
 
         return max(0, min(100, $score));
     }
@@ -1295,24 +1217,23 @@ Nexevo Sales Team";
         $base = $contact->ai_score ?? 0;
 
         $stageBoost = match ($contact->status) {
-            'proposal' => 40,
-            'hot' => 30,
-            'qualified' => 20,
+            'proposal'   => 40,
+            'hot'        => 30,
+            'qualified'  => 20,
             'interested' => 10,
-            default => 0
+            default      => 0
         };
 
-        $callCount = $contact->callLogs()->count();
+        $callCount       = $contact->callLogs()->count();
         $engagementBoost = min(20, $callCount * 5);
 
-        $probability = $base + $stageBoost + $engagementBoost;
-
-        return min(100, $probability);
+        return min(100, $base + $stageBoost + $engagementBoost);
     }
+
     public function generateLinkedInMessage(Contact $contact, string $purpose): string
     {
         $system = "You are a LinkedIn outreach specialist for Nexevo IT company. Write personalized connection requests and messages that get responses.";
-        $user = "Write a LinkedIn {$purpose} message to {$contact->name}, {$contact->designation} at {$contact->company} (Industry: {$contact->industry}).\nKeep it under 300 characters for connection request, 1000 for message. Be genuine, not salesy.";
+        $user   = "Write a LinkedIn {$purpose} message to {$contact->name}, {$contact->designation} at {$contact->company} (Industry: {$contact->industry}).\nKeep it under 300 characters for connection request, 1000 for message. Be genuine, not salesy.";
 
         return $this->chat($system, $user, 300);
     }
@@ -1335,67 +1256,49 @@ Nexevo Sales Team";
             ->count();
 
         $query = Contact::whereIn('status', ['interested', 'qualified', 'hot', 'proposal']);
-
-        if (!$user->can('admin')) {
-            $query->where('assigned_to', $user->id);
-        }
-
+        if (!$user->can('admin')) $query->where('assigned_to', $user->id);
         $hotLeads = $query->count();
 
         $query = Contact::where('created_at', '<=', now()->subDays(7))
             ->whereDoesntHave('callLogs', function ($q) {
                 $q->where('created_at', '>=', now()->subDays(7));
             });
-
-        if (!$user->can('admin')) {
-            $query->where('assigned_to', $user->id);
-        }
-
+        if (!$user->can('admin')) $query->where('assigned_to', $user->id);
         $inactiveLeads = $query->count();
-        // Team stats
-        // Team performance (last 7 days)
 
-        $topRep = null;
+        $topRep   = null;
         $topScore = 0;
 
         $users = User::withCount([
-            'callLogs as calls_week' => function ($q) {
-                $q->where('created_at', '>=', now()->subDays(7));
-            },
-            'followUps as followups_week' => function ($q) {
-                $q->where('created_at', '>=', now()->subDays(7));
-            }
+            'callLogs as calls_week'   => fn($q) => $q->where('created_at', '>=', now()->subDays(7)),
+            'followUps as followups_week' => fn($q) => $q->where('created_at', '>=', now()->subDays(7)),
         ])->get();
 
         foreach ($users as $u) {
-
             $score = $u->calls_week + $u->followups_week;
-
             if ($score > $topScore) {
                 $topScore = $score;
-                $topRep = $u;
+                $topRep   = $u;
             }
         }
 
-        if ($topScore === 0) {
-            $topRep = null;
-        }
+        if ($topScore === 0) $topRep = null;
 
         return [
-            'followups_today' => $followupsToday,
+            'followups_today'  => $followupsToday,
             'overdue_followups' => $overdueFollowups,
-            'calls_today' => $callsToday,
-            'hot_leads' => $hotLeads,
-            'inactive_leads' => $inactiveLeads,
-            'top_rep' => $topRep?->name,
-            'top_rep_score' => $topScore
+            'calls_today'      => $callsToday,
+            'hot_leads'        => $hotLeads,
+            'inactive_leads'   => $inactiveLeads,
+            'top_rep'          => $topRep?->name,
+            'top_rep_score'    => $topScore
         ];
     }
 
     public function parseVoiceTranscript(string $transcript, Contact $contact): array
     {
         $system = "You are a sales call analyzer. Extract structured data from call transcripts.";
-        $user = "Parse this call transcript with {$contact->name} from {$contact->company}:\n\"{$transcript}\"\n\nReturn JSON: {status: string, outcome: string, notes: string, sentiment: 'positive'|'neutral'|'negative', interest_level: 1-5, next_action: string, next_action_date: string}";
+        $user   = "Parse this call transcript with {$contact->name} from {$contact->company}:\n\"{$transcript}\"\n\nReturn JSON: {status: string, outcome: string, notes: string, sentiment: 'positive'|'neutral'|'negative', interest_level: 1-5, next_action: string, next_action_date: string}";
 
         $response = $this->chat($system, $user, 400);
 
@@ -1415,21 +1318,21 @@ Nexevo Sales Team";
     private function defaultAnalysis(): array
     {
         return [
-            'score' => 50,
-            'stage' => 'warm',
-            'buy_intent' => 'medium',
+            'score'                => 50,
+            'stage'                => 'warm',
+            'buy_intent'           => 'medium',
             'recommended_approach' => 'Continue nurturing with value-based content',
-            'key_insights' => ['Regular follow-up needed', 'Understand their IT budget cycle', 'Identify decision maker'],
-            'next_best_action' => 'Schedule a demo call',
+            'key_insights'         => ['Regular follow-up needed', 'Understand their IT budget cycle', 'Identify decision maker'],
+            'next_best_action'     => 'Schedule a demo call',
         ];
     }
 
     private function defaultBriefing(string $name): array
     {
         return [
-            'greeting' => "Good morning, {$name}! Ready to crush your targets today?",
-            'priority' => 'Focus on hot leads first, then follow up on yesterday\'s calls.',
-            'tip' => 'Lead with value: Ask about their current challenges before pitching.',
+            'greeting'   => "Good morning, {$name}! Ready to crush your targets today?",
+            'priority'   => 'Focus on hot leads first, then follow up on yesterday\'s calls.',
+            'tip'        => 'Lead with value: Ask about their current challenges before pitching.',
             'motivation' => 'Every call is an opportunity. Make them count!',
         ];
     }

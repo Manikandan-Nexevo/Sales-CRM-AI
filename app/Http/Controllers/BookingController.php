@@ -16,478 +16,125 @@ use Illuminate\Support\Facades\Mail;
 class BookingController extends Controller
 {
     // ─────────────────────────────────────────────────────────────────────────
-    // PUBLIC  (no auth — slug-based)
+    // PRIVATE HELPERS
     // ─────────────────────────────────────────────────────────────────────────
 
-    /** POST /api/booking-link  (auth) */
-    public function createLink()
+    /**
+     * Loops through all companies in the main DB, sets the tenant connection
+     * to whichever company owns the given slug, and returns the booking_link row.
+     * After this runs, DB::connection('tenant') is ready to use for that tenant.
+     */
+    private function resolveTenantBySlug(string $slug): ?object
     {
-        $user = auth()->user();
-        $link = BookingLink::firstOrCreate(
-            ['user_id' => $user->id],
-            [
-                'slug'      => Str::slug($user->name) . '-' . rand(100, 999),
-                'duration'  => 30,
-                'is_active' => 1,
-            ]
-        );
-        $link->booking_url = url("/book/{$link->slug}");
-        return response()->json($link);
-    }
+        $companies = DB::connection('mysql')->table('companies')->get();
 
-    /** GET /api/book/{slug}?date=YYYY-MM-DD */
-    public function getAvailability(Request $request, $slug)
-    {
-        $date = $request->query('date') ?? now()->toDateString();
-        $link = BookingLink::where('slug', $slug)->where('is_active', 1)->firstOrFail();
-        $day  = Carbon::parse($date)->format('l');
-
-        $availability = Availability::where('user_id', $link->user_id)
-            ->where('day_of_week', $day)->where('is_active', 1)->get();
-
-        if ($availability->isEmpty()) {
-            return response()->json([
-                'date'     => $date,
-                'slots'    => [],
-                'duration' => $link->duration,
-                'message'  => 'No availability configured for ' . $day,
+        foreach ($companies as $company) {
+            config([
+                'database.connections.tenant.host'     => $company->db_host,
+                'database.connections.tenant.database' => $company->db_name,
+                'database.connections.tenant.username' => $company->db_username,
+                'database.connections.tenant.password' => $company->db_password,
             ]);
-        }
-
-        $slots = $this->generateSlots($availability, $link->duration);
-        $slots = $this->removeBookedSlots($slots, $link->user_id, $date);
-
-        return response()->json(['date' => $date, 'slots' => $slots, 'duration' => $link->duration]);
-    }
-
-    public function book(Request $request, $slug)
-    {
-        $request->validate([
-            'name'         => 'required|string|max:255',
-            'email'        => 'required|email',
-            'start_time'   => 'required|date',
-            'meeting_type' => 'nullable|in:jitsi,gmeet',
-        ]);
-
-        $link  = BookingLink::where('slug', $slug)->where('is_active', 1)->firstOrFail();
-        $start = Carbon::parse($request->start_time);
-        $end   = $start->copy()->addMinutes($link->duration);
-
-        if ($this->slotTaken($link->user_id, $start, $end)) {
-            return response()->json(['error' => 'This time slot is already booked'], 400);
-        }
-
-        $meetingType = $request->meeting_type ?? 'jitsi';
-
-        $contactId = $this->tenantDb()->table('contacts')
-            ->where('email', $request->email)
-            ->value('id');
-
-        [$roomName, $meetingUrl] = $this->buildMeeting(
-            $meetingType,
-            $link->user_id,
-            $start,
-            $end,
-            $request->name,
-            $request->email
-        );
-
-        $bookingId = $this->tenantDb()->table('bookings')->insertGetId([
-            'user_id'      => $link->user_id,
-            'contact_id'   => $contactId,
-            'name'         => $request->name,
-            'email'        => $request->email,
-            'start_time'   => $start,
-            'end_time'     => $end,
-            'timezone'     => $request->timezone ?? 'Asia/Kolkata',
-            'meeting_link' => $roomName,   // for gmeet: this IS the Google event ID
-            'meeting_url'  => $meetingUrl,
-            'meeting_type' => $meetingType,
-            'status'       => 'scheduled',
-            'created_at'   => now(),
-        ]);
-
-        $bookingObj = (object) [
-            'id'           => $bookingId,
-            'user_id'      => $link->user_id,
-            'name'         => $request->name,
-            'email'        => $request->email,
-            'start_time'   => $start,
-            'end_time'     => $end,
-            'meeting_link' => $roomName,
-            'meeting_url'  => $meetingUrl,
-            'meeting_type' => $meetingType,
-            'status'       => 'scheduled',
-        ];
-
-        $this->insertCalendarEvent($link->user_id, $bookingObj, $request->name);
-
-        $hostUser = DB::connection('mysql')->table('users')->where('id', $link->user_id)->first();
-
-        $this->sendConfirmationEmail(
-            toEmail: $request->email,
-            toName: $request->name,
-            hostName: $hostUser->name ?? 'Your Host',
-            startTime: $start,
-            endTime: $end,
-            timezone: $request->timezone ?? 'Asia/Kolkata',
-            meetingUrl: $meetingUrl,
-            meetingType: $meetingType,
-        );
-
-        return response()->json(['message' => 'Booking confirmed', 'data' => $bookingObj]);
-    }
-
-    public function reschedule(Request $request, $slug)
-    {
-        $request->validate(['booking_id' => 'required|integer', 'new_time' => 'required|date']);
-
-        $booking = $this->tenantDb()->table('bookings')->where('id', $request->booking_id)->first();
-
-        $start = Carbon::parse($request->new_time);
-        $end   = $start->copy()->addMinutes(30);
-
-        $this->tenantDb()->table('bookings')
-            ->where('id', $request->booking_id)
-            ->update(['start_time' => $start, 'end_time' => $end]);
-
-        $this->updateCalendarEventTimes($request->booking_id, $start, $end);
-
-        if ($booking && $booking->meeting_type === 'gmeet' && !empty($booking->meeting_link)) {
-            $this->patchGoogleCalendarEvent($booking->user_id, $booking->meeting_link, $start, $end);
-        }
-
-        if ($booking) {
-            $hostUser = DB::connection('mysql')->table('users')->where('id', $booking->user_id)->first();
-            $this->sendRescheduleEmail(
-                toEmail: $booking->email,
-                toName: $booking->name,
-                hostName: $hostUser->name ?? 'Your Host',
-                newStart: $start,
-                newEnd: $end,
-                timezone: $booking->timezone ?? 'Asia/Kolkata',
-                meetingUrl: $booking->meeting_url,
-                meetingType: $booking->meeting_type ?? 'jitsi',
-            );
-        }
-
-        return response()->json(['message' => 'Booking rescheduled successfully']);
-    }
-
-    public function cancel(Request $request, $slug)
-    {
-        $request->validate(['booking_id' => 'required|integer']);
-
-        $booking = $this->tenantDb()->table('bookings')->where('id', $request->booking_id)->first();
-
-        $this->tenantDb()->table('bookings')
-            ->where('id', $request->booking_id)
-            ->update(['status' => 'cancelled']);
-
-        $this->cancelCalendarEvent($request->booking_id);
-
-        if ($booking && $booking->meeting_type === 'gmeet' && !empty($booking->meeting_link)) {
-            $this->deleteGoogleCalendarEvent($booking->user_id, $booking->meeting_link);
-        }
-
-        if ($booking) {
-            $hostUser = DB::connection('mysql')->table('users')->where('id', $booking->user_id)->first();
-            $this->sendCancellationEmail(
-                toEmail: $booking->email,
-                toName: $booking->name,
-                hostName: $hostUser->name ?? 'Your Host',
-                start: Carbon::parse($booking->start_time),
-                timezone: $booking->timezone ?? 'Asia/Kolkata',
-            );
-        }
-
-        return response()->json(['message' => 'Booking cancelled successfully']);
-    }
-
-    public function getSlotsInternal(Request $request)
-    {
-        $userId = auth()->id();
-        if (!$userId) return response()->json(['error' => 'Unauthenticated'], 401);
-
-        $date = $request->query('date');
-        if (!$date) return response()->json(['error' => 'date query parameter is required'], 422);
-
-        $day = Carbon::parse($date)->format('l');
-
-        $availability = Availability::where('user_id', $userId)
-            ->where('day_of_week', $day)
-            ->where('is_active', 1)
-            ->get();
-
-        if ($availability->isEmpty()) {
-            return response()->json([
-                'slots'   => [],
-                'message' => 'No availability set for ' . $day . '. Go to Settings → Availability to set your working hours.',
-            ]);
-        }
-
-        $slots = $this->generateSlots($availability, 30);
-        $slots = $this->removeBookedSlots($slots, $userId, $date);
-
-        return response()->json(['slots' => $slots]);
-    }
-
-    public function bookInternal(Request $request)
-    {
-        $userId = auth()->id();
-        if (!$userId) return response()->json(['error' => 'Unauthenticated'], 401);
-
-        $request->validate([
-            'contact_id'   => 'nullable|integer',
-            'name'         => 'required|string|max:255',
-            'email'        => 'required|email',
-            'start_time'   => 'required|date',
-            'meeting_type' => 'nullable|in:jitsi,gmeet',
-        ]);
-
-        $start = Carbon::parse($request->start_time);
-        $end   = $start->copy()->addMinutes(30);
-
-        if ($this->slotTaken($userId, $start, $end)) {
-            return response()->json(['error' => 'This slot is already booked. Please pick another time.'], 400);
-        }
-
-        $meetingType = $request->meeting_type ?? 'jitsi';
-        $hostUser    = auth()->user();
-
-        [$roomName, $meetingUrl] = $this->buildMeeting(
-            $meetingType,
-            $userId,
-            $start,
-            $end,
-            $request->name,
-            $request->email
-        );
-
-        $bookingId = $this->tenantDb()->table('bookings')->insertGetId([
-            'user_id'      => $userId,
-            'contact_id'   => $request->contact_id,
-            'name'         => $request->name,
-            'email'        => $request->email,
-            'start_time'   => $start,
-            'end_time'     => $end,
-            'timezone'     => $request->timezone ?? 'Asia/Kolkata',
-            'meeting_link' => $roomName,   // for gmeet: this IS the Google event ID
-            'meeting_url'  => $meetingUrl,
-            'meeting_type' => $meetingType,
-            'status'       => 'scheduled',
-            'created_at'   => now(),
-        ]);
-
-        $bookingObj = (object) [
-            'id'           => $bookingId,
-            'user_id'      => $userId,
-            'contact_id'   => $request->contact_id,
-            'name'         => $request->name,
-            'email'        => $request->email,
-            'start_time'   => $start,
-            'end_time'     => $end,
-            'meeting_link' => $roomName,
-            'meeting_url'  => $meetingUrl,
-            'meeting_type' => $meetingType,
-            'status'       => 'scheduled',
-        ];
-
-        $this->insertCalendarEvent($userId, $bookingObj, $request->name);
-
-        $this->sendConfirmationEmail(
-            toEmail: $request->email,
-            toName: $request->name,
-            hostName: $hostUser->name ?? 'Your Host',
-            startTime: $start,
-            endTime: $end,
-            timezone: $request->timezone ?? 'Asia/Kolkata',
-            meetingUrl: $meetingUrl,
-            meetingType: $meetingType,
-        );
-
-        return response()->json(['message' => 'Meeting scheduled successfully', 'data' => $bookingObj]);
-    }
-
-    public function rescheduleInternal(Request $request)
-    {
-        $userId = auth()->id();
-        if (!$userId) return response()->json(['error' => 'Unauthenticated'], 401);
-
-        $request->validate([
-            'booking_id' => 'required|integer',
-            'new_time'   => 'required|date',
-        ]);
-
-        $booking = $this->tenantDb()->table('bookings')
-            ->where('id', $request->booking_id)
-            ->where('user_id', $userId)
-            ->first();
-
-        if (!$booking) {
-            return response()->json(['error' => 'Booking not found'], 404);
-        }
-
-        $start = Carbon::parse($request->new_time);
-        $end   = $start->copy()->addMinutes(30);
-
-        $this->tenantDb()->table('bookings')
-            ->where('id', $request->booking_id)
-            ->where('user_id', $userId)
-            ->update(['start_time' => $start, 'end_time' => $end]);
-
-        $this->updateCalendarEventTimes($request->booking_id, $start, $end);
-
-        if ($booking->meeting_type === 'gmeet' && !empty($booking->meeting_link)) {
-            $this->patchGoogleCalendarEvent($userId, $booking->meeting_link, $start, $end);
-        }
-
-        $hostUser = auth()->user();
-        $this->sendRescheduleEmail(
-            toEmail: $booking->email,
-            toName: $booking->name,
-            hostName: $hostUser->name ?? 'Your Host',
-            newStart: $start,
-            newEnd: $end,
-            timezone: $booking->timezone ?? 'Asia/Kolkata',
-            meetingUrl: $booking->meeting_url,
-            meetingType: $booking->meeting_type ?? 'jitsi',
-        );
-
-        return response()->json(['message' => 'Rescheduled successfully']);
-    }
-
-    public function cancelInternal(Request $request)
-    {
-        $userId = auth()->id();
-        if (!$userId) return response()->json(['error' => 'Unauthenticated'], 401);
-
-        $request->validate(['booking_id' => 'required|integer']);
-
-        $booking = $this->tenantDb()->table('bookings')
-            ->where('id', $request->booking_id)
-            ->where('user_id', $userId)
-            ->first();
-
-        if (!$booking) {
-            return response()->json(['error' => 'Booking not found'], 404);
-        }
-
-        $this->tenantDb()->table('bookings')
-            ->where('id', $request->booking_id)
-            ->where('user_id', $userId)
-            ->update(['status' => 'cancelled']);
-
-        $this->cancelCalendarEvent($request->booking_id);
-
-        if ($booking->meeting_type === 'gmeet' && !empty($booking->meeting_link)) {
-            $this->deleteGoogleCalendarEvent($userId, $booking->meeting_link);
-        }
-
-        $hostUser = auth()->user();
-        $this->sendCancellationEmail(
-            toEmail: $booking->email,
-            toName: $booking->name,
-            hostName: $hostUser->name ?? 'Your Host',
-            start: Carbon::parse($booking->start_time),
-            timezone: $booking->timezone ?? 'Asia/Kolkata',
-        );
-
-        return response()->json(['message' => 'Cancelled successfully']);
-    }
-
-    public function setAvailability(Request $request)
-    {
-        $userId = auth()->id();
-        if (!$userId) return response()->json(['error' => 'Unauthenticated'], 401);
-
-        $request->validate([
-            'availability'               => 'required|array|min:1',
-            'availability.*.day_of_week' => 'required|in:Monday,Tuesday,Wednesday,Thursday,Friday,Saturday,Sunday',
-            'availability.*.start_time'  => 'required|date_format:H:i',
-            'availability.*.end_time'    => 'required|date_format:H:i',
-        ]);
-
-        Availability::where('user_id', $userId)->delete();
-
-        $rows = collect($request->availability)->map(fn($a) => [
-            'user_id'     => $userId,
-            'day_of_week' => $a['day_of_week'],
-            'start_time'  => $a['start_time'] . ':00',
-            'end_time'    => $a['end_time']   . ':00',
-            'timezone'    => $request->timezone ?? 'Asia/Kolkata',
-            'is_active'   => 1,
-        ])->toArray();
-
-        Availability::insert($rows);
-
-        return response()->json(['message' => 'Availability saved successfully.', 'days' => count($rows)]);
-    }
-
-    public function getAvailabilitySettings()
-    {
-        $userId = auth()->id();
-        if (!$userId) return response()->json(['error' => 'Unauthenticated'], 401);
-
-        $availability = Availability::where('user_id', $userId)
-            ->where('is_active', 1)
-            ->get(['day_of_week', 'start_time', 'end_time']);
-
-        $link = BookingLink::where('user_id', $userId)->where('is_active', 1)->first();
-        $bookingUrl = $link ? url("/book/{$link->slug}") : null;
-
-        return response()->json(['availability' => $availability, 'booking_link' => $bookingUrl]);
-    }
-
-    public function myBookings()
-    {
-        $userId = auth()->id();
-        if (!$userId) return response()->json(['error' => 'Unauthenticated'], 401);
-
-        $bookings = $this->tenantDb()->table('bookings')
-            ->where('user_id', $userId)
-            ->orderBy('created_at', 'desc')
-            ->get();
-
-        $bookings = $bookings->map(function ($b) {
-            $b = (array) $b;
-            if (empty($b['meeting_url']) && !empty($b['meeting_link'])) {
-                $type = $b['meeting_type'] ?? 'jitsi';
-                if ($type === 'jitsi') {
-                    $b['meeting_url'] = "https://meet.jit.si/{$b['meeting_link']}";
-                }
+            DB::purge('tenant');
+            DB::reconnect('tenant');
+
+            $link = DB::connection('tenant')
+                ->table('booking_links')
+                ->where('slug', $slug)
+                ->where('is_active', 1)
+                ->first();
+
+            if ($link) {
+                return $link; // tenant connection is now correctly set for this company
             }
-            return $b;
-        });
-
-        return response()->json($bookings);
-    }
-
-    public function getMeetingToken(Request $request, string $roomName)
-    {
-        $userId = auth()->id();
-        if (!$userId) return response()->json(['error' => 'Unauthenticated'], 401);
-
-        $response = Http::withToken(env('DAILY_API_KEY'))
-            ->post('https://api.daily.co/v1/meeting-tokens', [
-                'properties' => [
-                    'room_name'        => $roomName,
-                    'user_name'        => auth()->user()->name ?? 'Host',
-                    'is_owner'         => true,
-                    'exp'              => now()->addHours(2)->timestamp,
-                    'enable_recording' => 'local',
-                ],
-            ]);
-
-        if (!$response->successful()) {
-            return response()->json(['error' => 'Could not generate meeting token'], 500);
         }
 
-        return response()->json([
-            'token'     => $response->json()['token'],
-            'room_url'  => "https://nexevo-sales.daily.co/{$roomName}",
-            'room_name' => $roomName,
-        ]);
+        return null;
+    }
+
+    private function tenantDb(): \Illuminate\Database\Connection
+    {
+        return DB::connection('tenant');
+    }
+
+    private function slotTaken(int $userId, Carbon $start, Carbon $end): bool
+    {
+        return DB::connection('tenant')->table('bookings')
+            ->where('user_id', $userId)
+            ->where('status', 'scheduled')
+            ->where('start_time', '<', $end)
+            ->where('end_time', '>', $start)
+            ->exists();
+    }
+
+    private function generateSlots($availability, int $duration): array
+    {
+        $slots = [];
+        foreach ($availability as $a) {
+            $start = Carbon::parse($a->start_time);
+            $end   = Carbon::parse($a->end_time);
+            while ($start->copy()->addMinutes($duration) <= $end) {
+                $slots[] = $start->format('H:i');
+                $start->addMinutes($duration);
+            }
+        }
+        return array_unique($slots);
+    }
+
+    private function removeBookedSlots(array $slots, int $userId, string $date): array
+    {
+        $booked = DB::connection('tenant')->table('bookings')
+            ->where('user_id', $userId)
+            ->whereDate('start_time', $date)
+            ->where('status', 'scheduled')
+            ->pluck('start_time')
+            ->map(fn($t) => Carbon::parse($t)->format('H:i'))
+            ->toArray();
+
+        return array_values(array_diff($slots, $booked));
+    }
+
+    private function insertCalendarEvent(int $userId, object $booking, string $name): void
+    {
+        try {
+            DB::connection('tenant')->table('calendar_events')->insert([
+                'user_id'      => $userId,
+                'type'         => 'booking',
+                'reference_id' => $booking->id,
+                'title'        => 'Meeting with ' . $name,
+                'start_time'   => $booking->start_time,
+                'end_time'     => $booking->end_time,
+                'status'       => 'scheduled',
+                'created_at'   => now(),
+                'updated_at'   => now(),
+            ]);
+        } catch (\Throwable $e) {
+            Log::warning('CalendarEvent insert skipped: ' . $e->getMessage());
+        }
+    }
+
+    private function updateCalendarEventTimes(int $bookingId, Carbon $start, Carbon $end): void
+    {
+        try {
+            DB::connection('tenant')->table('calendar_events')
+                ->where('reference_id', $bookingId)
+                ->where('type', 'booking')
+                ->update(['start_time' => $start, 'end_time' => $end, 'updated_at' => now()]);
+        } catch (\Throwable $e) {
+            Log::warning('CalendarEvent update skipped: ' . $e->getMessage());
+        }
+    }
+
+    private function cancelCalendarEvent(int $bookingId): void
+    {
+        try {
+            DB::connection('tenant')->table('calendar_events')
+                ->where('reference_id', $bookingId)
+                ->where('type', 'booking')
+                ->update(['status' => 'cancelled', 'updated_at' => now()]);
+        } catch (\Throwable $e) {
+            Log::warning('CalendarEvent cancel skipped: ' . $e->getMessage());
+        }
     }
 
     private function buildMeeting(
@@ -515,14 +162,20 @@ class BookingController extends Controller
         $user = DB::connection('mysql')->table('users')->where('id', $userId)->first();
 
         if (!$user || empty($user->google_access_token)) {
-            Log::warning('Google Meet: no access token for user ' . $userId . '. Falling back to Jitsi.');
-            $roomName = 'crm-' . Str::random(10);
-            return [$roomName, "https://meet.jit.si/{$roomName}"];
+            Log::warning("Google Meet: no token for user {$userId}. Falling back to Jitsi.");
+            return $this->jitsiFallback();
         }
 
+        // This now returns null on failure instead of stale token
         $accessToken = $this->refreshGoogleTokenIfNeeded($user);
-        $timezone    = $user->timezone ?? 'Asia/Kolkata';
-        $userName    = $user->name ?? 'Host';
+
+        if (!$accessToken) {
+            Log::warning("Google Meet: token refresh failed for user {$userId}. Falling back to Jitsi.");
+            return $this->jitsiFallback();
+        }
+
+        $timezone = $user->timezone ?? 'Asia/Kolkata';
+        $userName = $user->name ?? 'Host';
 
         $body = [
             'summary'     => "Meeting: {$userName} & {$guestName}",
@@ -536,8 +189,8 @@ class BookingController extends Controller
                 'timeZone' => $timezone,
             ],
             'attendees' => [
-                ['email' => $user->email,  'displayName' => $userName,  'responseStatus' => 'accepted'],
-                ['email' => $guestEmail,   'displayName' => $guestName, 'responseStatus' => 'needsAction'],
+                ['email' => $user->email, 'displayName' => $userName,  'responseStatus' => 'accepted'],
+                ['email' => $guestEmail,  'displayName' => $guestName, 'responseStatus' => 'needsAction'],
             ],
             'conferenceData' => [
                 'createRequest' => [
@@ -560,13 +213,24 @@ class BookingController extends Controller
                 $body
             );
 
+        // Handle 401 specifically — token might have been invalidated on Google's side
+        if ($response->status() === 401) {
+            Log::warning("Google Meet 401 for user {$userId} — token revoked on Google's side. Falling back to Jitsi.");
+            // Clear the bad token so user is prompted to reconnect
+            DB::connection('mysql')->table('users')->where('id', $userId)->update([
+                'google_access_token'     => null,
+                'google_token_expires_at' => null,
+                'updated_at'              => now(),
+            ]);
+            return $this->jitsiFallback();
+        }
+
         if (!$response->successful()) {
             Log::error('Google Calendar event creation failed', [
                 'status' => $response->status(),
                 'body'   => $response->body(),
             ]);
-            $roomName = 'crm-' . Str::random(10);
-            return [$roomName, "https://meet.jit.si/{$roomName}"];
+            return $this->jitsiFallback();
         }
 
         $event      = $response->json();
@@ -576,14 +240,20 @@ class BookingController extends Controller
             ?? null;
 
         if (!$meetingUrl) {
-            Log::warning('Google Calendar event created but no Meet link.', ['event' => $event]);
-            $roomName = 'crm-' . Str::random(10);
-            return [$roomName, "https://meet.jit.si/{$roomName}"];
+            Log::warning('Google Calendar event created but no Meet link found.', ['event' => $event]);
+            return $this->jitsiFallback();
         }
 
+        Log::info("Google Meet created for user {$userId}: {$meetingUrl}");
         return [$eventId, $meetingUrl];
     }
 
+    // Add this helper to avoid repeating the fallback everywhere
+    private function jitsiFallback(): array
+    {
+        $roomName = 'crm-' . Str::random(10);
+        return [$roomName, "https://meet.jit.si/{$roomName}"];
+    }
     private function deleteGoogleCalendarEvent(int $userId, string $googleEventId): void
     {
         try {
@@ -591,6 +261,7 @@ class BookingController extends Controller
             if (!$user || empty($user->google_access_token)) return;
 
             $accessToken = $this->refreshGoogleTokenIfNeeded($user);
+            if (!$accessToken) return; // ← null check added
 
             $response = Http::withToken($accessToken)
                 ->delete(
@@ -617,7 +288,9 @@ class BookingController extends Controller
             if (!$user || empty($user->google_access_token)) return;
 
             $accessToken = $this->refreshGoogleTokenIfNeeded($user);
-            $timezone    = $user->timezone ?? 'Asia/Kolkata';
+            if (!$accessToken) return; // ← null check added
+
+            $timezone = $user->timezone ?? 'Asia/Kolkata';
 
             $response = Http::withToken($accessToken)
                 ->patch(
@@ -647,18 +320,26 @@ class BookingController extends Controller
         }
     }
 
-    private function refreshGoogleTokenIfNeeded(object $user): string
+
+
+    private function refreshGoogleTokenIfNeeded(object $user): ?string
     {
+        // Token is still valid — use it
         if (
+            !empty($user->google_access_token) &&
             $user->google_token_expires_at &&
-            Carbon::parse($user->google_token_expires_at)->isFuture()
+            Carbon::parse($user->google_token_expires_at)->subMinutes(5)->isFuture()
         ) {
             return $user->google_access_token;
         }
 
+        // No refresh token — cannot refresh
         if (empty($user->google_refresh_token)) {
-            return $user->google_access_token ?? '';
+            Log::error('Google token expired and no refresh_token available for user ' . $user->id);
+            return null; // Return null so caller knows it failed
         }
+
+        Log::info('Refreshing Google token for user ' . $user->id);
 
         $response = Http::asForm()->post('https://oauth2.googleapis.com/token', [
             'client_id'     => env('GOOGLE_CLIENT_ID'),
@@ -667,18 +348,33 @@ class BookingController extends Controller
             'grant_type'    => 'refresh_token',
         ]);
 
-        if ($response->successful()) {
-            $data = $response->json();
-            DB::connection('mysql')->table('users')->where('id', $user->id)->update([
-                'google_access_token'     => $data['access_token'],
-                'google_token_expires_at' => now()->addSeconds($data['expires_in'] ?? 3600),
-                'updated_at'              => now(),
+        if (!$response->successful()) {
+            Log::error('Google token refresh FAILED for user ' . $user->id, [
+                'status' => $response->status(),
+                'body'   => $response->body(),
             ]);
-            return $data['access_token'];
+            return null; // Return null — do not use the stale token
         }
 
-        return $user->google_access_token ?? '';
+        $data        = $response->json();
+        $newToken    = $data['access_token'];
+        $expiresIn   = $data['expires_in'] ?? 3600;
+
+        DB::connection('mysql')->table('users')->where('id', $user->id)->update([
+            'google_access_token'     => $newToken,
+            'google_token_expires_at' => now()->addSeconds($expiresIn),
+            'updated_at'              => now(),
+        ]);
+
+        Log::info('Google token refreshed successfully for user ' . $user->id .
+            ', expires in ' . $expiresIn . 's');
+
+        return $newToken;
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // EMAIL HELPERS
+    // ─────────────────────────────────────────────────────────────────────────
 
     private function sendConfirmationEmail(
         string  $toEmail,
@@ -713,14 +409,18 @@ class BookingController extends Controller
 </p>
 BODY;
 
-            Mail::html(
-                $this->emailShell('✅', 'Meeting Confirmed!', $appName, $body),
-                fn($m) => $m->to($toEmail, $toName)->subject($subject)
-            );
+            $html = $this->emailShell('✅', 'Meeting Confirmed!', $appName, $body);
+
+            Mail::html($html, function ($m) use ($toEmail, $toName, $subject) {
+                $m->to($toEmail, $toName)->subject($subject);
+            });
 
             Log::info("Confirmation email sent to {$toEmail}");
         } catch (\Throwable $e) {
-            Log::error('Confirmation email failed: ' . $e->getMessage(), ['to' => $toEmail]);
+            Log::error('Confirmation email failed: ' . $e->getMessage(), [
+                'to'    => $toEmail,
+                'trace' => $e->getTraceAsString(),
+            ]);
         }
     }
 
@@ -740,7 +440,8 @@ BODY;
             $body = <<<BODY
 <p style="color:#374151;font-size:14px;margin:0 0 16px;">
   Hi <strong>{$toName}</strong>, your meeting with <strong>{$hostName}</strong> scheduled for
-  <strong>{$formattedDate} at {$formattedStart} ({$timezone})</strong> has been <strong style="color:#ef4444;">cancelled</strong>.
+  <strong>{$formattedDate} at {$formattedStart} ({$timezone})</strong> has been
+  <strong style="color:#ef4444;">cancelled</strong>.
 </p>
 <table width="100%" cellpadding="0" cellspacing="0" style="background:#fef2f2;border:1px solid #fecaca;border-radius:12px;margin-bottom:20px;">
   <tr><td style="padding:13px 18px;border-bottom:1px solid #fecaca;">
@@ -757,14 +458,18 @@ BODY;
 </p>
 BODY;
 
-            Mail::html(
-                $this->emailShell('❌', 'Meeting Cancelled', $appName, $body),
-                fn($m) => $m->to($toEmail, $toName)->subject($subject)
-            );
+            $html = $this->emailShell('❌', 'Meeting Cancelled', $appName, $body);
+
+            Mail::html($html, function ($m) use ($toEmail, $toName, $subject) {
+                $m->to($toEmail, $toName)->subject($subject);
+            });
 
             Log::info("Cancellation email sent to {$toEmail}");
         } catch (\Throwable $e) {
-            Log::error('Cancellation email failed: ' . $e->getMessage(), ['to' => $toEmail]);
+            Log::error('Cancellation email failed: ' . $e->getMessage(), [
+                'to'    => $toEmail,
+                'trace' => $e->getTraceAsString(),
+            ]);
         }
     }
 
@@ -802,14 +507,18 @@ BODY;
 </p>
 BODY;
 
-            Mail::html(
-                $this->emailShell('🔄', 'Meeting Rescheduled', $appName, $body),
-                fn($m) => $m->to($toEmail, $toName)->subject($subject)
-            );
+            $html = $this->emailShell('🔄', 'Meeting Rescheduled', $appName, $body);
+
+            Mail::html($html, function ($m) use ($toEmail, $toName, $subject) {
+                $m->to($toEmail, $toName)->subject($subject);
+            });
 
             Log::info("Reschedule email sent to {$toEmail}");
         } catch (\Throwable $e) {
-            Log::error('Reschedule email failed: ' . $e->getMessage(), ['to' => $toEmail]);
+            Log::error('Reschedule email failed: ' . $e->getMessage(), [
+                'to'    => $toEmail,
+                'trace' => $e->getTraceAsString(),
+            ]);
         }
     }
 
@@ -876,93 +585,553 @@ HTML;
 HTML;
     }
 
-    private function tenantConnectionName(): string
-    {
-        return (new Booking())->getConnectionName() ?? config('database.default');
-    }
+    // ─────────────────────────────────────────────────────────────────────────
+    // PUBLIC ROUTES (no auth — slug-based)
+    // ─────────────────────────────────────────────────────────────────────────
 
-    private function tenantDb(): \Illuminate\Database\Connection
-    {
-        return DB::connection($this->tenantConnectionName());
-    }
-
-    private function slotTaken(int $userId, Carbon $start, Carbon $end): bool
-    {
-        return $this->tenantDb()->table('bookings')
-            ->where('user_id', $userId)
-            ->where('status', 'scheduled')
-            ->where('start_time', '<', $end)
-            ->where('end_time', '>', $start)
-            ->exists();
-    }
-
-    private function generateSlots($availability, int $duration): array
-    {
-        $slots = [];
-        foreach ($availability as $a) {
-            $start = Carbon::parse($a->start_time);
-            $end   = Carbon::parse($a->end_time);
-            while ($start->copy()->addMinutes($duration) <= $end) {
-                $slots[] = $start->format('H:i');
-                $start->addMinutes($duration);
-            }
-        }
-        return array_unique($slots);
-    }
-
-    private function removeBookedSlots(array $slots, int $userId, string $date): array
-    {
-        $booked = $this->tenantDb()->table('bookings')
-            ->where('user_id', $userId)
-            ->whereDate('start_time', $date)
-            ->where('status', 'scheduled')
-            ->pluck('start_time')
-            ->map(fn($t) => Carbon::parse($t)->format('H:i'))
-            ->toArray();
-
-        return array_values(array_diff($slots, $booked));
-    }
-
-    private function insertCalendarEvent(int $userId, object $booking, string $name): void
+    /** GET /api/book/{slug}/info */
+    public function hostInfo(string $slug)
     {
         try {
-            $this->tenantDb()->table('calendar_events')->insert([
-                'user_id'      => $userId,
-                'type'         => 'booking',
-                'reference_id' => $booking->id,
-                'title'        => 'Meeting with ' . $name,
-                'start_time'   => $booking->start_time,
-                'end_time'     => $booking->end_time,
-                'status'       => 'scheduled',
-                'created_at'   => now(),
-                'updated_at'   => now(),
+            $link = $this->resolveTenantBySlug($slug);
+
+            if (!$link) {
+                return response()->json(['error' => 'Booking link not found.'], 404);
+            }
+
+            $user = DB::connection('mysql')
+                ->table('users')
+                ->where('id', $link->user_id)
+                ->first();
+
+            if (!$user) {
+                return response()->json(['error' => 'Host not found.'], 404);
+            }
+
+            return response()->json([
+                'host' => [
+                    'name'    => $user->name,
+                    'company' => $user->company_name ?? null,
+                    'avatar'  => $user->avatar ?? null,
+                ],
+                'slug' => $slug,
             ]);
         } catch (\Throwable $e) {
-            Log::warning('CalendarEvent insert skipped: ' . $e->getMessage());
+            Log::error('hostInfo failed: ' . $e->getMessage());
+            return response()->json(['error' => $e->getMessage()], 500);
         }
     }
 
-    private function updateCalendarEventTimes(int $bookingId, Carbon $start, Carbon $end): void
+    /** GET /api/book/{slug}?date=YYYY-MM-DD */
+    public function getAvailability(Request $request, $slug)
     {
         try {
-            $this->tenantDb()->table('calendar_events')
-                ->where('reference_id', $bookingId)
-                ->where('type', 'booking')
-                ->update(['start_time' => $start, 'end_time' => $end, 'updated_at' => now()]);
+            $date = $request->query('date') ?? now()->toDateString();
+            $link = $this->resolveTenantBySlug($slug);
+
+            if (!$link) {
+                return response()->json(['slots' => [], 'message' => 'Invalid booking link.'], 404);
+            }
+
+            $day = Carbon::parse($date)->format('l');
+
+            $availability = DB::connection('tenant')
+                ->table('availability')
+                ->where('user_id', $link->user_id)
+                ->where('day_of_week', $day)
+                ->where('is_active', 1)
+                ->get();
+
+            if ($availability->isEmpty()) {
+                return response()->json([
+                    'date'     => $date,
+                    'slots'    => [],
+                    'duration' => $link->duration,
+                    'message'  => 'No availability configured for ' . $day,
+                ]);
+            }
+
+            $slots = $this->generateSlots($availability, $link->duration);
+            $slots = $this->removeBookedSlots($slots, $link->user_id, $date);
+
+            return response()->json(['date' => $date, 'slots' => $slots, 'duration' => $link->duration]);
         } catch (\Throwable $e) {
-            Log::warning('CalendarEvent update skipped: ' . $e->getMessage());
+            Log::error('getAvailability failed: ' . $e->getMessage());
+            return response()->json(['slots' => [], 'message' => 'Error loading availability.'], 500);
         }
     }
 
-    private function cancelCalendarEvent(int $bookingId): void
+    /** POST /api/book/{slug} */
+    public function book(Request $request, $slug)
     {
-        try {
-            $this->tenantDb()->table('calendar_events')
-                ->where('reference_id', $bookingId)
-                ->where('type', 'booking')
-                ->update(['status' => 'cancelled', 'updated_at' => now()]);
-        } catch (\Throwable $e) {
-            Log::warning('CalendarEvent cancel skipped: ' . $e->getMessage());
+        $request->validate([
+            'name'         => 'required|string|max:255',
+            'email'        => 'required|email',
+            'start_time'   => 'required|date',
+            'meeting_type' => 'nullable|in:jitsi,gmeet',
+        ]);
+
+        $link = $this->resolveTenantBySlug($slug);
+
+        if (!$link) {
+            return response()->json(['error' => 'Invalid booking link.'], 404);
         }
+
+        $start = Carbon::parse($request->start_time);
+        $end   = $start->copy()->addMinutes($link->duration);
+
+        if ($this->slotTaken($link->user_id, $start, $end)) {
+            return response()->json(['error' => 'This time slot is already booked'], 400);
+        }
+
+        $meetingType = $request->meeting_type ?? 'jitsi';
+
+        $contactId = DB::connection('tenant')
+            ->table('contacts')
+            ->where('email', $request->email)
+            ->value('id');
+
+        [$roomName, $meetingUrl] = $this->buildMeeting(
+            $meetingType,
+            $link->user_id,
+            $start,
+            $end,
+            $request->name,
+            $request->email
+        );
+
+        $bookingId = DB::connection('tenant')->table('bookings')->insertGetId([
+            'user_id'      => $link->user_id,
+            'contact_id'   => $contactId,
+            'name'         => $request->name,
+            'email'        => $request->email,
+            'start_time'   => $start,
+            'end_time'     => $end,
+            'timezone'     => $request->timezone ?? 'Asia/Kolkata',
+            'meeting_link' => $roomName,
+            'meeting_url'  => $meetingUrl,
+            'meeting_type' => $meetingType,
+            'status'       => 'scheduled',
+            'created_at'   => now(),
+        ]);
+
+        $bookingObj = (object) [
+            'id'           => $bookingId,
+            'user_id'      => $link->user_id,
+            'name'         => $request->name,
+            'email'        => $request->email,
+            'start_time'   => $start,
+            'end_time'     => $end,
+            'meeting_link' => $roomName,
+            'meeting_url'  => $meetingUrl,
+            'meeting_type' => $meetingType,
+            'status'       => 'scheduled',
+        ];
+
+        $this->insertCalendarEvent($link->user_id, $bookingObj, $request->name);
+
+        $hostUser = DB::connection('mysql')
+            ->table('users')
+            ->where('id', $link->user_id)
+            ->first();
+
+        $this->sendConfirmationEmail(
+            toEmail: $request->email,
+            toName: $request->name,
+            hostName: $hostUser->name ?? 'Your Host',
+            startTime: $start,
+            endTime: $end,
+            timezone: $request->timezone ?? 'Asia/Kolkata',
+            meetingUrl: $meetingUrl,
+            meetingType: $meetingType,
+        );
+
+        return response()->json(['message' => 'Booking confirmed', 'data' => $bookingObj]);
+    }
+
+    /** POST /api/book/{slug}/reschedule */
+    public function reschedule(Request $request, $slug)
+    {
+        $request->validate(['booking_id' => 'required|integer', 'new_time' => 'required|date']);
+
+        $link = $this->resolveTenantBySlug($slug);
+
+        $booking = DB::connection('tenant')->table('bookings')->where('id', $request->booking_id)->first();
+
+        $start = Carbon::parse($request->new_time);
+        $end   = $start->copy()->addMinutes(30);
+
+        DB::connection('tenant')->table('bookings')
+            ->where('id', $request->booking_id)
+            ->update(['start_time' => $start, 'end_time' => $end]);
+
+        $this->updateCalendarEventTimes($request->booking_id, $start, $end);
+
+        if ($booking && $booking->meeting_type === 'gmeet' && !empty($booking->meeting_link)) {
+            $this->patchGoogleCalendarEvent($booking->user_id, $booking->meeting_link, $start, $end);
+        }
+
+        if ($booking) {
+            $hostUser = DB::connection('mysql')->table('users')->where('id', $booking->user_id)->first();
+            $this->sendRescheduleEmail(
+                toEmail: $booking->email,
+                toName: $booking->name,
+                hostName: $hostUser->name ?? 'Your Host',
+                newStart: $start,
+                newEnd: $end,
+                timezone: $booking->timezone ?? 'Asia/Kolkata',
+                meetingUrl: $booking->meeting_url,
+                meetingType: $booking->meeting_type ?? 'jitsi',
+            );
+        }
+
+        return response()->json(['message' => 'Booking rescheduled successfully']);
+    }
+
+    /** POST /api/book/{slug}/cancel */
+    public function cancel(Request $request, $slug)
+    {
+        $request->validate(['booking_id' => 'required|integer']);
+
+        $link = $this->resolveTenantBySlug($slug);
+
+        $booking = DB::connection('tenant')->table('bookings')->where('id', $request->booking_id)->first();
+
+        DB::connection('tenant')->table('bookings')
+            ->where('id', $request->booking_id)
+            ->update(['status' => 'cancelled']);
+
+        $this->cancelCalendarEvent($request->booking_id);
+
+        if ($booking && $booking->meeting_type === 'gmeet' && !empty($booking->meeting_link)) {
+            $this->deleteGoogleCalendarEvent($booking->user_id, $booking->meeting_link);
+        }
+
+        if ($booking) {
+            $hostUser = DB::connection('mysql')->table('users')->where('id', $booking->user_id)->first();
+            $this->sendCancellationEmail(
+                toEmail: $booking->email,
+                toName: $booking->name,
+                hostName: $hostUser->name ?? 'Your Host',
+                start: Carbon::parse($booking->start_time),
+                timezone: $booking->timezone ?? 'Asia/Kolkata',
+            );
+        }
+
+        return response()->json(['message' => 'Booking cancelled successfully']);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // AUTHENTICATED ROUTES
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /** POST /api/booking-link */
+    public function createLink()
+    {
+        $user = auth()->user();
+        $link = BookingLink::firstOrCreate(
+            ['user_id' => $user->id],
+            [
+                'slug'      => Str::slug($user->name) . '-' . rand(100, 999),
+                'duration'  => 30,
+                'is_active' => 1,
+            ]
+        );
+        $link->booking_url = url("/book/{$link->slug}");
+        return response()->json($link);
+    }
+
+    /** GET /api/internal/slots */
+    public function getSlotsInternal(Request $request)
+    {
+        $userId = auth()->id();
+        if (!$userId) return response()->json(['error' => 'Unauthenticated'], 401);
+
+        $date = $request->query('date');
+        if (!$date) return response()->json(['error' => 'date query parameter is required'], 422);
+
+        $day = Carbon::parse($date)->format('l');
+
+        $availability = Availability::where('user_id', $userId)
+            ->where('day_of_week', $day)
+            ->where('is_active', 1)
+            ->get();
+
+        if ($availability->isEmpty()) {
+            return response()->json([
+                'slots'   => [],
+                'message' => 'No availability set for ' . $day . '. Go to Settings → Availability to set your working hours.',
+            ]);
+        }
+
+        $slots = $this->generateSlots($availability, 30);
+        $slots = $this->removeBookedSlots($slots, $userId, $date);
+
+        return response()->json(['slots' => $slots]);
+    }
+
+    /** POST /api/internal/book */
+    public function bookInternal(Request $request)
+    {
+        $userId = auth()->id();
+        if (!$userId) return response()->json(['error' => 'Unauthenticated'], 401);
+
+        $request->validate([
+            'contact_id'   => 'nullable|integer',
+            'name'         => 'required|string|max:255',
+            'email'        => 'required|email',
+            'start_time'   => 'required|date',
+            'meeting_type' => 'nullable|in:jitsi,gmeet',
+        ]);
+
+        $start = Carbon::parse($request->start_time);
+        $end   = $start->copy()->addMinutes(30);
+
+        if ($this->slotTaken($userId, $start, $end)) {
+            return response()->json(['error' => 'This slot is already booked. Please pick another time.'], 400);
+        }
+
+        $meetingType = $request->meeting_type ?? 'jitsi';
+        $hostUser    = auth()->user();
+
+        [$roomName, $meetingUrl] = $this->buildMeeting(
+            $meetingType,
+            $userId,
+            $start,
+            $end,
+            $request->name,
+            $request->email
+        );
+
+        $bookingId = $this->tenantDb()->table('bookings')->insertGetId([
+            'user_id'      => $userId,
+            'contact_id'   => $request->contact_id,
+            'name'         => $request->name,
+            'email'        => $request->email,
+            'start_time'   => $start,
+            'end_time'     => $end,
+            'timezone'     => $request->timezone ?? 'Asia/Kolkata',
+            'meeting_link' => $roomName,
+            'meeting_url'  => $meetingUrl,
+            'meeting_type' => $meetingType,
+            'status'       => 'scheduled',
+            'created_at'   => now(),
+        ]);
+
+        $bookingObj = (object) [
+            'id'           => $bookingId,
+            'user_id'      => $userId,
+            'contact_id'   => $request->contact_id,
+            'name'         => $request->name,
+            'email'        => $request->email,
+            'start_time'   => $start,
+            'end_time'     => $end,
+            'meeting_link' => $roomName,
+            'meeting_url'  => $meetingUrl,
+            'meeting_type' => $meetingType,
+            'status'       => 'scheduled',
+        ];
+
+        $this->insertCalendarEvent($userId, $bookingObj, $request->name);
+
+        $this->sendConfirmationEmail(
+            toEmail: $request->email,
+            toName: $request->name,
+            hostName: $hostUser->name ?? 'Your Host',
+            startTime: $start,
+            endTime: $end,
+            timezone: $request->timezone ?? 'Asia/Kolkata',
+            meetingUrl: $meetingUrl,
+            meetingType: $meetingType,
+        );
+
+        return response()->json(['message' => 'Meeting scheduled successfully', 'data' => $bookingObj]);
+    }
+
+    /** POST /api/internal/reschedule */
+    public function rescheduleInternal(Request $request)
+    {
+        $userId = auth()->id();
+        if (!$userId) return response()->json(['error' => 'Unauthenticated'], 401);
+
+        $request->validate([
+            'booking_id' => 'required|integer',
+            'new_time'   => 'required|date',
+        ]);
+
+        $booking = $this->tenantDb()->table('bookings')
+            ->where('id', $request->booking_id)
+            ->where('user_id', $userId)
+            ->first();
+
+        if (!$booking) {
+            return response()->json(['error' => 'Booking not found'], 404);
+        }
+
+        $start = Carbon::parse($request->new_time);
+        $end   = $start->copy()->addMinutes(30);
+
+        $this->tenantDb()->table('bookings')
+            ->where('id', $request->booking_id)
+            ->where('user_id', $userId)
+            ->update(['start_time' => $start, 'end_time' => $end]);
+
+        $this->updateCalendarEventTimes($request->booking_id, $start, $end);
+
+        if ($booking->meeting_type === 'gmeet' && !empty($booking->meeting_link)) {
+            $this->patchGoogleCalendarEvent($userId, $booking->meeting_link, $start, $end);
+        }
+
+        $hostUser = auth()->user();
+        $this->sendRescheduleEmail(
+            toEmail: $booking->email,
+            toName: $booking->name,
+            hostName: $hostUser->name ?? 'Your Host',
+            newStart: $start,
+            newEnd: $end,
+            timezone: $booking->timezone ?? 'Asia/Kolkata',
+            meetingUrl: $booking->meeting_url,
+            meetingType: $booking->meeting_type ?? 'jitsi',
+        );
+
+        return response()->json(['message' => 'Rescheduled successfully']);
+    }
+
+    /** POST /api/internal/cancel */
+    public function cancelInternal(Request $request)
+    {
+        $userId = auth()->id();
+        if (!$userId) return response()->json(['error' => 'Unauthenticated'], 401);
+
+        $request->validate(['booking_id' => 'required|integer']);
+
+        $booking = $this->tenantDb()->table('bookings')
+            ->where('id', $request->booking_id)
+            ->where('user_id', $userId)
+            ->first();
+
+        if (!$booking) {
+            return response()->json(['error' => 'Booking not found'], 404);
+        }
+
+        $this->tenantDb()->table('bookings')
+            ->where('id', $request->booking_id)
+            ->where('user_id', $userId)
+            ->update(['status' => 'cancelled']);
+
+        $this->cancelCalendarEvent($request->booking_id);
+
+        if ($booking->meeting_type === 'gmeet' && !empty($booking->meeting_link)) {
+            $this->deleteGoogleCalendarEvent($userId, $booking->meeting_link);
+        }
+
+        $hostUser = auth()->user();
+        $this->sendCancellationEmail(
+            toEmail: $booking->email,
+            toName: $booking->name,
+            hostName: $hostUser->name ?? 'Your Host',
+            start: Carbon::parse($booking->start_time),
+            timezone: $booking->timezone ?? 'Asia/Kolkata',
+        );
+
+        return response()->json(['message' => 'Cancelled successfully']);
+    }
+
+    /** POST /api/availability */
+    public function setAvailability(Request $request)
+    {
+        $userId = auth()->id();
+        if (!$userId) return response()->json(['error' => 'Unauthenticated'], 401);
+
+        $request->validate([
+            'availability'               => 'required|array|min:1',
+            'availability.*.day_of_week' => 'required|in:Monday,Tuesday,Wednesday,Thursday,Friday,Saturday,Sunday',
+            'availability.*.start_time'  => 'required|date_format:H:i',
+            'availability.*.end_time'    => 'required|date_format:H:i',
+        ]);
+
+        Availability::where('user_id', $userId)->delete();
+
+        $rows = collect($request->availability)->map(fn($a) => [
+            'user_id'     => $userId,
+            'day_of_week' => $a['day_of_week'],
+            'start_time'  => $a['start_time'] . ':00',
+            'end_time'    => $a['end_time']   . ':00',
+            'timezone'    => $request->timezone ?? 'Asia/Kolkata',
+            'is_active'   => 1,
+        ])->toArray();
+
+        Availability::insert($rows);
+
+        return response()->json(['message' => 'Availability saved successfully.', 'days' => count($rows)]);
+    }
+
+    /** GET /api/availability */
+    public function getAvailabilitySettings()
+    {
+        $userId = auth()->id();
+        if (!$userId) return response()->json(['error' => 'Unauthenticated'], 401);
+
+        $availability = Availability::where('user_id', $userId)
+            ->where('is_active', 1)
+            ->get(['day_of_week', 'start_time', 'end_time']);
+
+        $link = BookingLink::where('user_id', $userId)->where('is_active', 1)->first();
+        $bookingUrl = $link ? url("/book/{$link->slug}") : null;
+
+        return response()->json(['availability' => $availability, 'booking_link' => $bookingUrl]);
+    }
+
+    /** GET /api/my-bookings */
+    public function myBookings()
+    {
+        $userId = auth()->id();
+        if (!$userId) return response()->json(['error' => 'Unauthenticated'], 401);
+
+        $bookings = $this->tenantDb()->table('bookings')
+            ->where('user_id', $userId)
+            ->orderBy('created_at', 'desc')
+            ->get();
+
+        $bookings = $bookings->map(function ($b) {
+            $b = (array) $b;
+            if (empty($b['meeting_url']) && !empty($b['meeting_link'])) {
+                $type = $b['meeting_type'] ?? 'jitsi';
+                if ($type === 'jitsi') {
+                    $b['meeting_url'] = "https://meet.jit.si/{$b['meeting_link']}";
+                }
+            }
+            return $b;
+        });
+
+        return response()->json($bookings);
+    }
+
+    /** GET /api/meeting-token/{roomName} */
+    public function getMeetingToken(Request $request, string $roomName)
+    {
+        $userId = auth()->id();
+        if (!$userId) return response()->json(['error' => 'Unauthenticated'], 401);
+
+        $response = Http::withToken(env('DAILY_API_KEY'))
+            ->post('https://api.daily.co/v1/meeting-tokens', [
+                'properties' => [
+                    'room_name'        => $roomName,
+                    'user_name'        => auth()->user()->name ?? 'Host',
+                    'is_owner'         => true,
+                    'exp'              => now()->addHours(2)->timestamp,
+                    'enable_recording' => 'local',
+                ],
+            ]);
+
+        if (!$response->successful()) {
+            return response()->json(['error' => 'Could not generate meeting token'], 500);
+        }
+
+        return response()->json([
+            'token'     => $response->json()['token'],
+            'room_url'  => "https://nexevo-sales.daily.co/{$roomName}",
+            'room_name' => $roomName,
+        ]);
     }
 }

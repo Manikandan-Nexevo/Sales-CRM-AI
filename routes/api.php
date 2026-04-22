@@ -34,6 +34,7 @@ Route::get('/book/{slug}',               [BookingController::class, 'getAvailabi
 Route::post('/book/{slug}',              [BookingController::class, 'book']);
 Route::post('/book/{slug}/reschedule',   [BookingController::class, 'reschedule']);
 Route::post('/book/{slug}/cancel',       [BookingController::class, 'cancel']);
+Route::get('/book/{slug}/info', [BookingController::class, 'hostInfo']);
 
 // WhatsApp webhook
 Route::post('/send-whatsapp',            [WhatsappController::class, 'sendWhatsappMessage']);
@@ -41,7 +42,7 @@ Route::get('/whatsapp/webhook',          [WhatsappController::class, 'verify']);
 Route::post('/whatsapp/webhook',         [WhatsappController::class, 'webhook']);
 Route::get('/list-messages',             [WhatsappController::class, 'listmessages']);
 
-// Dashboard routes 
+// Dashboard routes
 Route::get('/dashboard/pipeline',        [DashboardController::class, 'pipeline']);
 Route::get('/dashboard/leaderboard',     [DashboardController::class, 'leaderboard']);
 Route::get('/dashboard/ai-insights',     [DashboardController::class, 'aiInsights']);
