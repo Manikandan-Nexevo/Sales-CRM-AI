@@ -25,7 +25,8 @@ class User extends Authenticatable
         'target_calls_daily',
         'target_leads_monthly',
         'is_active',
-        'company_id' // ✅ VERY IMPORTANT
+        'company_id', // ✅ VERY IMPORTANT
+        'permissions',
     ];
 
     protected $hidden = [
@@ -39,6 +40,7 @@ class User extends Authenticatable
         'is_active' => 'boolean',
         'target_calls_daily' => 'integer',
         'target_leads_monthly' => 'integer',
+        'permissions'          => 'array',
     ];
 
     /*
@@ -85,5 +87,34 @@ class User extends Authenticatable
         return $this->callLogs()
             ->whereDate('created_at', today())
             ->count();
+    }
+
+    public function sidebarItems(): array
+    {
+        if (in_array($this->role, ['admin', 'superadmin'])) {
+            return ['contacts', 'calls', 'followups', 'team', 'availability', 'bookings', 'settings'];
+        }
+
+        $permissions = $this->permissions ?? [];
+
+        $map = [
+            'contacts'     => 'sidebar.contacts',
+            'calls'        => 'sidebar.calls',
+            'followups'    => 'sidebar.followups',
+            'team'         => 'sidebar.team',
+            'availability' => 'sidebar.availability',
+            'bookings'     => 'sidebar.bookings',
+            'settings'     => 'sidebar.settings',
+        ];
+
+        return array_keys(array_filter(
+            $map,
+            fn($permission) => in_array($permission, $permissions)
+        ));
+    }
+
+    public function syncPermissions(array $permissions): void
+    {
+        $this->update(['permissions' => array_values(array_unique($permissions))]);
     }
 }

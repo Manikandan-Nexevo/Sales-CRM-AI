@@ -70,7 +70,7 @@ class CompanyController extends Controller
 
     public function show(Company $company): JsonResponse
     {
-        $company->load(['users', 'subscriptions.plan', 'invoices', 'activeSubscription.plan']);
+        $company->load(['users', 'subscriptions.plan', 'activeSubscription.plan']);
 
         $data = $company->toArray();
         $data['created_at'] = $this->formatDate($company->created_at);

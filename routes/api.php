@@ -98,7 +98,7 @@ Route::middleware('auth:sanctum')->group(function () {
     });
 
     // General Routes
-    Route::get('/users',              [UserController::class, 'users']);
+    Route::get('/users',              [UserController::class, 'simple']);
     Route::get('/calendar',           [CalendarController::class, 'index']);
     Route::post('/ai/send-generated-email', [AIController::class, 'sendGeneratedEmail']);
 
