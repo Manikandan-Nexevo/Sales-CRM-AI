@@ -120,33 +120,24 @@ class CompanyController extends Controller
                 'user_id' => Auth::id(),
                 'company_id' => $company->id,
                 'action' => 'create_company',
-                'description' => "Company {$company->name} created",
+                'description' => "Company {$company->name} has been created",
             ]);
 
             $dbName = 'tenant_' . $company->id;
             DB::statement("CREATE DATABASE `$dbName`");
 
             $company->update([
-                'db_host' => '127.0.0.1',
+                'db_host' => env('TENANT_DB_HOST'),
                 'db_name' => $dbName,
-                'db_username' => 'root',
-                'db_password' => null,
-                'db_port' => 3306,
+                'db_username' => env('TENANT_DB_USERNAME'),
+                'db_password' => env('TENANT_DB_PASSWORD'),
+                'db_port' => env('TENANT_DB_PORT'),
             ]);
 
             config([
-                'database.connections.tenant' => [
-                    'driver' => 'mysql',
-                    'host' => '127.0.0.1',
-                    'database' => $dbName,
-                    'username' => 'root',
-                    'password' => '',
-                    'port' => 3306,
-                    'charset' => 'utf8mb4',
-                    'collation' => 'utf8mb4_unicode_ci',
-                ]
+                'database.connections.tenant.database' => $dbName,
             ]);
-
+            
             DB::purge('tenant');
             DB::reconnect('tenant');
 
@@ -239,7 +230,7 @@ class CompanyController extends Controller
                 'user_id' => Auth::id(),
                 'company_id' => $company->id,
                 'action' => 'update_company',
-                'description' => "Company {$company->name} updated",
+                'description' => "Company {$company->name} has been updated",
             ]);
         }
 

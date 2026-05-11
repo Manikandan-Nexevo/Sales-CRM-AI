@@ -29,6 +29,7 @@ Route::prefix('auth')->group(function () {
     Route::post('/register', [AuthController::class, 'register']);
 });
 
+
 // Meeting booking
 Route::get('/book/{slug}',               [BookingController::class, 'getAvailability']);
 Route::post('/book/{slug}',              [BookingController::class, 'book']);
@@ -54,6 +55,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/auth/logout',   [AuthController::class, 'logout']);
     Route::get('/auth/me',        [AuthController::class, 'me']);
     Route::put('/auth/profile',   [AuthController::class, 'updateProfile']);
+
+    //Roles ANd Permisiions
+    Route::post('/save-permissions', [AuthController::class, 'savePermissions']);
 
 
     Route::get('/internal/slots',    [BookingController::class, 'getSlotsInternal']);
@@ -98,7 +102,7 @@ Route::middleware('auth:sanctum')->group(function () {
     });
 
     // General Routes
-    Route::get('/users',              [UserController::class, 'simple']);
+
     Route::get('/calendar',           [CalendarController::class, 'index']);
     Route::post('/ai/send-generated-email', [AIController::class, 'sendGeneratedEmail']);
 
@@ -148,8 +152,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/export/report',           [ExportController::class, 'fullReport']);
     Route::post('/contacts/import',        [ExportController::class, 'import']);
 
+    Route::apiResource('users', UserController::class);
     Route::middleware('can:admin')->group(function () {
-        Route::apiResource('users',                   UserController::class);
         Route::get('/users/{user}/performance',       [UserController::class, 'performance']);
     });
 });

@@ -1,66 +1,146 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+ ## Project Overview
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+This project is a role-based B2B marketplace system that manages products plans, RFQs, and orders.
+Admin controls configurations and approvals, Sales manages regions and licenses, Resellers handle RFQs and orders, and End Customers request quotes and purchase products.
+Authentication is handled via Auth0 with secure, role-based access
 
-## About Laravel
+## Key Integration ...
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+Multi-Tenant Database Support
+Role & Permission Management
+Admin & Sales Representative Management
+Lead Management System
+Follow-up & Reminder Tracking
+Customer & Contact Management
+AI Assistant Integration
+GROQ AI Integration
+WhatsApp API Integration
+Google Meet Integration
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+## Tech Stack
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+Framework: Laravel (v10)
+Language: PHP (8.1.31)
+Database: MySQL
+API Style: REST APIs
+Server: Apache
 
-## Learning Laravel
+## Project Structure
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework.
+app/ -> Core application logic (Controllers, Models, Helpers, Services)
+config/ -> Application configuration files
+routes/ -> API route definitions
+storage/ -> Logs, app/public/products
+public/ -> Entry point (index.php)
+.env -> Environment configuration
 
-You may also try the [Laravel Bootcamp](https://bootcamp.laravel.com), where you will be guided through building a modern Laravel application from scratch.
+## Installation & Setup
 
-If you don't feel like reading, [Laracasts](https://laracasts.com) can help. Laracasts contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+## Clone the Repository
 
-## Laravel Sponsors
+git clone <repository-url>
+cd project-name
 
-We would like to extend our thanks to the following sponsors for funding Laravel development. If you are interested in becoming a sponsor, please visit the [Laravel Partners program](https://partners.laravel.com).
+## Install Dependencies
 
-### Premium Partners
+composer install
 
-- **[Vehikl](https://vehikl.com/)**
-- **[Tighten Co.](https://tighten.co)**
-- **[WebReinvent](https://webreinvent.com/)**
-- **[Kirschbaum Development Group](https://kirschbaumdevelopment.com)**
-- **[64 Robots](https://64robots.com)**
-- **[Curotec](https://www.curotec.com/services/technologies/laravel/)**
-- **[Cyber-Duck](https://cyber-duck.co.uk)**
-- **[DevSquad](https://devsquad.com/hire-laravel-developers)**
-- **[Jump24](https://jump24.co.uk)**
-- **[Redberry](https://redberry.international/laravel/)**
-- **[Active Logic](https://activelogic.com)**
-- **[byte5](https://byte5.de)**
-- **[OP.GG](https://op.gg)**
+## Environment Configuration
 
-## Contributing
+cp .env.example .env
+php artisan key:generate
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+## Update .env Configuration ...
+APP_NAME="Nexevo Sales CRM"
+APP_ENV=local
+APP_DEBUG=true
+APP_URL=http://localhost:8000 (Product Backend URL)
 
-## Code of Conduct
+DB_CONNECTION=mysql
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_DATABASE=username
+DB_USERNAME=root
+DB_PASSWORD=password
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+TENANT_DB_HOST=127.0.0.1
+TENANT_DB_PORT=3306
+TENANT_DB_USERNAME=username
+TENANT_DB_PASSWORD=password
 
-## Security Vulnerabilities
+FRONTEND_URL=http://localhost:5174 (Production Frontend URL)
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+CORS_ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5174  (Production Frontend & Backend URL)
+ 
+## GROQ AI Integration ...
 
-## License
+GROQ_API_KEY=your_groq_api_key
+GROQ_MODEL=llama-3.1-8b-instant
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+## WhatsApp API Integration ...
+
+WHATSAPP_API_TOKEN=your_whatsapp_token
+WHATSAPP_PHONE_ID=your_phone_id
+
+## Google Login Integration ...
+
+GOOGLE_CLIENT_ID=your_google_client_id
+GOOGLE_CLIENT_SECRET=your_google_client_secret
+GOOGLE_REDIRECT_URI=http://localhost:8000/api/google/callback  (Production Backend URL)
+
+## Mail Configuration ...
+
+MAIL_MAILER=smtp
+MAIL_HOST=mailpit
+MAIL_PORT=1025
+MAIL_USERNAME=nex****@gamil.com
+MAIL_PASSWORD=hj***********
+MAIL_ENCRYPTION=null
+MAIL_FROM_ADDRESS="nex****@gamil.com"
+MAIL_FROM_NAME="${APP_NAME}"
+
+
+## Run the Application
+
+php artisan serve
+
+## Deployment
+Server Requirements
+
+PHP version >= 8.1.32
+Composer
+MySQL version >= 8.0.42
+phpmyadmin version >= 5.2.1
+Apache/Nginx
+
+## Deployment Steps
+
+Upload project to server
+Configure .env
+Run composer install
+Set permissions for storage and bootstrap/cache
+   (chmod -R 775 storage bootstrap/cache)
+
+## Cache & Optimization
+
+php artisan optimize
+php artisan config:clear
+php artisan route:clear
+php artisan cache:clear
+
+## Common Issues
+
+500 Error: Check storage permissions
+Composer error: Ensure correct PHP version
+DB connection failed: Verify .env credentials
+
+## Developer Notes
+
+Follow MVC Architecture
+Use Form Request Validation
+Maintain standard API response structure
+Use Service Classes for reusable business logic
+Follow REST API best practices
+Maintain proper activity logging
+Optimize database queries for better performance
+Secure all APIs using authentication middleware

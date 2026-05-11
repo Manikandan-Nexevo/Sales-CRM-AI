@@ -2,11 +2,13 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\RolesPermission;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\ValidationException;
+use Illuminate\Support\Facades\DB;
 
 class AuthController extends Controller
 {
@@ -62,10 +64,25 @@ class AuthController extends Controller
             ], 403);
         }
 
-        // 🔥 BLOCK COMPANY INACTIVE
+        // ❌ company inactive
         if ($user->company && $user->company->status === 'inactive') {
             return response()->json([
                 'message' => 'Your company is inactive. Please contact super admin.'
+            ], 403);
+        }
+
+        // roles and permission
+        $roles_permission = RolesPermission::on('mysql')
+            ->where('user_id', $user->id)
+            ->first();
+
+        // ❌ Check permission only for admin & sales_rep
+        if (
+            in_array($user->role, ['admin', 'sales_rep']) &&
+            !$roles_permission
+        ) {
+            return response()->json([
+                'message' => 'Your account permissions have not been configured yet. Please contact the administrator.'
             ], 403);
         }
 
@@ -74,14 +91,14 @@ class AuthController extends Controller
 
         $token = $user->createToken('auth-token')->plainTextToken;
 
-        // ── KEY CHANGE: redirect field tells frontend where to go ──
         $redirect = $user->role === 'superadmin' ? '/super' : '/';
 
         return response()->json([
-            'success'  => true,
-            'user'     => $user,
-            'token'    => $token,
-            'redirect' => $redirect,
+            'success'          => true,
+            'user'             => $user,
+            'roles_permission' => $roles_permission,
+            'token'            => $token,
+            'redirect'         => $redirect,
         ]);
     }
 
@@ -89,6 +106,85 @@ class AuthController extends Controller
     {
         $request->user()->currentAccessToken()->delete();
         return response()->json(['success' => true, 'message' => 'Logged out successfully']);
+    }
+
+    public function savePermissions(Request $request)
+    {
+        $request->validate([
+            'user_id' => 'required'
+        ]);
+
+        $userId = $request->user_id;
+
+        // Helper function → check any value = 1
+        $isEnabled = function ($array) {
+            return collect($array)->contains(1) ? 1 : 0;
+        };
+
+        $contactsArr = [
+            'add'    => $request->contacts['add'] ?? 0,
+            'edit'   => $request->contacts['edit'] ?? 0,
+            'view'   => $request->contacts['view'] ?? 0,
+            'delete' => $request->contacts['delete'] ?? 0,
+            'export' => $request->contacts['export'] ?? 0,
+            'import' => $request->contacts['import'] ?? 0,
+        ];
+        $contactsArr['contacts'] = $isEnabled($contactsArr);
+
+        $callLogsArr = [
+            'view'   => $request->call_logs['view'] ?? 0,
+            'log'    => $request->call_logs['log'] ?? 0,
+            'export' => $request->call_logs['export'] ?? 0,
+        ];
+        $callLogsArr['call_logs'] = $isEnabled($callLogsArr);
+
+        $followUpsArr = [
+            'view' => $request->follow_ups['view'] ?? 0,
+            'ai'   => $request->follow_ups['ai'] ?? 0,
+        ];
+        $followUpsArr['follow_ups'] = $isEnabled($followUpsArr);
+
+        $teamsArr = [
+            'add' => $request->teams['add'] ?? 0,
+        ];
+        $teamsArr['teams'] = $isEnabled($teamsArr);
+
+        $data = [
+            'contacts'     => json_encode($contactsArr),
+            'call_logs'    => json_encode($callLogsArr),
+            'follow_ups'   => json_encode($followUpsArr),
+            'teams'        => json_encode($teamsArr),
+
+            'availability' => $request->availability ?? 0,
+            'my_bookings'  => $request->my_bookings ?? 0,
+            'settings'     => $request->settings ?? 0,
+
+            'whatsapp'     => $request->whatsapp ?? 0,
+            'ai_assistant' => $request->ai_assistant ?? 0,
+            'email'        => $request->email ?? 0,
+
+            'updated_at'   => now(),
+        ];
+
+        $exists = DB::table('roles_permissions')
+            ->where('user_id', $userId)
+            ->first();
+
+        if ($exists) {
+            DB::table('roles_permissions')
+                ->where('user_id', $userId)
+                ->update($data);
+        } else {
+            $data['user_id'] = $userId;
+            $data['created_at'] = now();
+
+            DB::table('roles_permissions')->insert($data);
+        }
+
+        return response()->json([
+            'status' => true,
+            'message' => 'Permissions saved successfully'
+        ]);
     }
 
     public function me(Request $request): JsonResponse

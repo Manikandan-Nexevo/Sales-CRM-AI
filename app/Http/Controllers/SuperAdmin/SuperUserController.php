@@ -7,6 +7,7 @@ use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\DB;
 
 class SuperUserController extends Controller
 {
@@ -66,12 +67,48 @@ class SuperUserController extends Controller
             });
         }
 
-        // ── PAGINATION ─────────────────────────
-        /** @var \Illuminate\Pagination\LengthAwarePaginator $users */
         $users = $query->latest()->paginate($request->per_page ?? 10);
 
-        $collection = $users->getCollection()->map(fn($u) => $this->transform($u));
+        $userIds = $users->pluck('id');
 
+        $permissions = DB::table('roles_permissions')
+            ->whereIn('user_id', $userIds)
+            ->get()
+            ->keyBy('user_id');
+
+        $collection = $users->getCollection()->map(function ($u) use ($permissions) {
+
+            $perm = $permissions[$u->id] ?? null;
+
+            return [
+                'id' => $u->id,
+                'name' => $u->name,
+                'email' => $u->email,
+                'role' => $u->role,
+                'status' => $u->status,
+                'company' => $u->company ? [
+                    'id' => $u->company->id,
+                    'name' => $u->company->name
+                ] : null,
+
+                'permissions' => $perm ? [
+                    'contacts'    => $perm->contacts ? json_decode($perm->contacts, true) : [],
+                    'call_logs'   => $perm->call_logs ? json_decode($perm->call_logs, true) : [],
+                    'follow_ups'  => $perm->follow_ups ? json_decode($perm->follow_ups, true) : [],
+                    'teams'       => $perm->teams ? json_decode($perm->teams, true) : [],
+
+                    'availability' => $perm->availability,
+                    'my_bookings'  => $perm->my_bookings,
+                    'settings'     => $perm->settings,
+
+                    'whatsapp'     => $perm->whatsapp,
+                    'ai_assistant' => $perm->ai_assistant,
+                    'email'        => $perm->email,
+                ] : null
+            ];
+        });
+
+        // ✅ Set modified collection back
         $users->setCollection($collection);
 
         return response()->json($users);

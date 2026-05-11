@@ -51,8 +51,20 @@ class UserController extends Controller
     // ─────────────────────────────────────────────────────────────────────────
     public function index(): JsonResponse
     {
-        $companyId = auth()->user()->company_id;
+        $user = auth()->user();
+        $companyId = $user->company_id;
 
+        if ($user->role !== 'admin' && $user->role !== 'manager') {
+            // Sales reps and others get a simple list for dropdowns etc.
+            $users = User::where('company_id', $companyId)
+                ->where('is_active', true)
+                ->select('id', 'name', 'role')
+                ->orderBy('name')
+                ->get();
+            return response()->json($users);
+        }
+
+        // Admins and managers get the full list with stats
         $users = User::where('company_id', $companyId)
             ->withCount([
                 'callLogs as today_calls' => fn($q) => $q->whereDate('created_at', today()),
@@ -70,7 +82,9 @@ class UserController extends Controller
     public function store(Request $request): JsonResponse
     {
         // Only admins / managers may create team members
-        $this->authorize('create', User::class);
+        if (auth()->user()->role !== 'admin' && auth()->user()->role !== 'manager') {
+            abort(403, 'This action is unauthorized.');
+        }
 
         $data = $request->validate([
             'name'         => ['required', 'string', 'min:2', 'max:191'],
@@ -121,7 +135,9 @@ class UserController extends Controller
     public function update(Request $request, User $user): JsonResponse
     {
         $this->ensureSameCompany($user);
-        $this->authorize('update', $user);
+        if (auth()->user()->role !== 'admin' && auth()->user()->role !== 'manager') {
+            abort(403, 'This action is unauthorized.');
+        }
 
         $data = $request->validate([
             'name'  => ['sometimes', 'string', 'min:2', 'max:191'],
@@ -148,7 +164,9 @@ class UserController extends Controller
     public function destroy(User $user): JsonResponse
     {
         $this->ensureSameCompany($user);
-        $this->authorize('delete', $user);
+        if (auth()->user()->role !== 'admin' && auth()->user()->role !== 'manager') {
+            abort(403, 'This action is unauthorized.');
+        }
 
         $user->update(['is_active' => false]);
 
@@ -161,7 +179,9 @@ class UserController extends Controller
     public function updatePermissions(Request $request, User $user): JsonResponse
     {
         $this->ensureSameCompany($user);
-        $this->authorize('update', $user);
+        if (auth()->user()->role !== 'admin' && auth()->user()->role !== 'manager') {
+            abort(403, 'This action is unauthorized.');
+        }
 
         $data = $request->validate([
             'permissions'   => ['required', 'array'],
@@ -199,16 +219,7 @@ class UserController extends Controller
     // ─────────────────────────────────────────────────────────────────────────
     // GET /api/users/simple  —  lightweight list for dropdowns
     // ─────────────────────────────────────────────────────────────────────────
-    public function simple(): JsonResponse
-    {
-        $users = User::where('company_id', auth()->user()->company_id)
-            ->where('is_active', true)
-            ->select('id', 'name', 'role')
-            ->orderBy('name')
-            ->get();
 
-        return response()->json($users);
-    }
 
     // ─────────────────────────────────────────────────────────────────────────
     // PRIVATE HELPERS
