@@ -1,30 +1,22 @@
 <?php
-// app/Models/Availability.php
 
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
-use App\Models\TenantModel;
 
-class RolesPermission extends TenantModel
+class RolesPermission extends Model
 {
     protected $table = 'roles_permissions';  
 
     protected $fillable = [
         'user_id',
-        'availability',
-        'my_bookings',
-        'settings',
-        'whatsapp',
-        'ai_assistant',
-        'email',
+        'sales_crm',
+        'project_management_tool',
         'status'
     ];
 
     protected $casts = [
-        'contacts'  => 'array',
-        'call_logs' => 'array',
-        'follow_ups'     => 'array',
-        'teams'     => 'array',
+        'sales_crm' => 'array',
+        'project_management_tool' => 'array',
     ];
 }

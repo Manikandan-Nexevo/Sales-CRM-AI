@@ -46,4 +46,16 @@ class Company extends Model
             ->where('status', 'active')
             ->latest();
     }
+
+    public function businessSuite()
+    {
+        return $this->hasOneThrough(
+            Business_suite::class,
+            User::class,
+            'company_id', // Foreign key on users table...
+            'user_id',    // Foreign key on business_suite table...
+            'id',         // Local key on companies table...
+            'id'          // Local key on users table...
+        );
+    }
 }

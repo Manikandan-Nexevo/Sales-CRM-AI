@@ -51,7 +51,7 @@ class AuthController extends Controller
 
         $user = User::where('email', $request->email)->first();
 
-        if (!$user || !Hash::check($request->password, $user->password)) {
+        if (!$user || !\Illuminate\Support\Facades\Hash::check($request->password, $user->password)) {
             throw ValidationException::withMessages([
                 'email' => ['Invalid credentials.'],
             ]);
@@ -62,6 +62,23 @@ class AuthController extends Controller
             return response()->json([
                 'message' => 'Your account is disabled.'
             ], 403);
+        }
+
+        // ❌ Check Business Suite permission (except for superadmin)
+        if ($user->role !== 'superadmin') {
+            $company = $user->company;
+            if (!$company) {
+                return response()->json([
+                    'message' => 'Your account does not have permission to access the Sales CRM. Please contact the administrator'
+                ], 403);
+            }
+
+            $businessSuite = $company->businessSuite;
+            if (!$businessSuite || $businessSuite->sales_crm != 1) {
+                return response()->json([
+                    'message' => 'Your account does not have permission to access the Sales CRM. Please contact the administrator'
+                ], 403);
+            }
         }
 
         // ❌ company inactive
@@ -149,11 +166,11 @@ class AuthController extends Controller
         ];
         $teamsArr['teams'] = $isEnabled($teamsArr);
 
-        $data = [
-            'contacts'     => json_encode($contactsArr),
-            'call_logs'    => json_encode($callLogsArr),
-            'follow_ups'   => json_encode($followUpsArr),
-            'teams'        => json_encode($teamsArr),
+        $salesCrmData = [
+            'contacts'     => $contactsArr,
+            'call_logs'    => $callLogsArr,
+            'follow_ups'   => $followUpsArr,
+            'teams'        => $teamsArr,
 
             'availability' => $request->availability ?? 0,
             'my_bookings'  => $request->my_bookings ?? 0,
@@ -162,8 +179,27 @@ class AuthController extends Controller
             'whatsapp'     => $request->whatsapp ?? 0,
             'ai_assistant' => $request->ai_assistant ?? 0,
             'email'        => $request->email ?? 0,
+        ];
 
-            'updated_at'   => now(),
+        $pmData = [
+            'backlog'      => $request->backlog ?? 0,
+            'board'        => $request->board ?? 0,
+            'gantt'        => $request->gantt ?? 0,
+            'pm_audit'     => $request->pm_audit ?? 0,
+            'timetracking' => $request->timetracking ?? 0,
+            'pm_roles'     => $request->pm_roles ?? 0,
+            'pm_system'    => $request->pm_system ?? 0,
+            'pm_settings'  => $request->pm_settings ?? 0,
+            'pm_users'     => $request->pm_users ?? 0,
+            'projects'     => $request->projects ?? 0,
+            'reports'      => $request->reports ?? 0,
+            'sprints'      => $request->sprints ?? 0,
+        ];
+
+        $data = [
+            'sales_crm'               => json_encode($salesCrmData),
+            'project_management_tool' => json_encode($pmData),
+            'updated_at'              => now(),
         ];
 
         $exists = DB::table('roles_permissions')

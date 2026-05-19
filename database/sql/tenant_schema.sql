@@ -165,4 +165,72 @@ CREATE TABLE `whatsapp_messages` (
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
+-- projects
+CREATE TABLE `projects` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `user_id` varchar(255) DEFAULT NULL,
+  `company_id` varchar(255) DEFAULT NULL,
+  `project_id` varchar(255) DEFAULT NULL,
+  `project_name` varchar(255) DEFAULT NULL,
+  `project_key` varchar(255) DEFAULT NULL,
+  `client_name` varchar(255) DEFAULT NULL,
+  `project_status` varchar(255) DEFAULT NULL,
+  `start_date` varchar(255) DEFAULT NULL,
+  `end_date` varchar(255) DEFAULT NULL,
+  `lead_id` varchar(255) DEFAULT NULL,
+  `lead_name` varchar(255) DEFAULT NULL,
+  `description` varchar(2000) DEFAULT NULL,
+  `status` varchar(50) DEFAULT 'active',
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `upaded_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- project_sprints
+CREATE TABLE `project_sprints` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `user_id` varchar(255) DEFAULT NULL,
+  `company_id` varchar(255) DEFAULT NULL,
+  `sprint_id` varchar(255) DEFAULT NULL,
+  `project_id` varchar(255) DEFAULT NULL,
+  `sprint_name` varchar(255) DEFAULT NULL,
+  `project_name` varchar(255) DEFAULT NULL,
+  `sprint_goal` varchar(5000) DEFAULT NULL,
+  `start_date` varchar(255) DEFAULT NULL,
+  `end_date` varchar(255) DEFAULT NULL,
+  `sprint_status` varchar(50) DEFAULT NULL,
+  `status` varchar(50) DEFAULT 'active',
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- task
+CREATE TABLE `task` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `user_id` varchar(255) DEFAULT NULL,
+  `company_id` varchar(255) DEFAULT NULL,
+  `task_id` varchar(255) DEFAULT NULL,
+  `sprint_id` varchar(255) DEFAULT NULL,
+  `project_id` varchar(255) DEFAULT NULL,
+  `sprint_name` varchar(255) DEFAULT NULL,
+  `project_name` varchar(255) DEFAULT NULL,
+  `task_title` varchar(255) DEFAULT NULL,
+  `task_description` varchar(5000) DEFAULT NULL,
+  `task_type` varchar(255) DEFAULT NULL,
+  `task_priority` varchar(255) DEFAULT NULL,
+  `task_assignee_id` varchar(50) DEFAULT NULL,
+  `task_assignee` varchar(255) DEFAULT NULL,
+  `task_report_id` varchar(50) DEFAULT NULL,
+  `task_reporter` varchar(255) DEFAULT NULL,
+  `task_sp` varchar(50) DEFAULT NULL,
+  `due_date` varchar(255) DEFAULT NULL,
+  `task_tag` varchar(255) DEFAULT NULL,
+  `task_status` varchar(50) DEFAULT NULL,
+  `status` varchar(50) DEFAULT 'active',
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
 SET FOREIGN_KEY_CHECKS = 1;

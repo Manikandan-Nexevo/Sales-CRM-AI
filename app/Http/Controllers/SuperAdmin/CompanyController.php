@@ -41,6 +41,8 @@ class CompanyController extends Controller
                 'users'      => $userCount,
                 'created_at' => $this->formatDate($c->created_at),
                 'updated_at' => $this->formatDate($c->updated_at),
+                'project_management_tool' => $c->businessSuite?->project_managment_tool,
+                'sales_crm'  => $c->businessSuite?->sales_crm,
             ]
         );
 
@@ -51,7 +53,7 @@ class CompanyController extends Controller
 
     public function index(Request $request): JsonResponse
     {
-        $query = Company::with('activeSubscription.plan');
+        $query = Company::with(['activeSubscription.plan', 'businessSuite']);
 
         if ($s = $request->search) {
             $query->where(
@@ -70,12 +72,14 @@ class CompanyController extends Controller
 
     public function show(Company $company): JsonResponse
     {
-        $company->load(['users', 'subscriptions.plan', 'activeSubscription.plan']);
+        $company->load(['users', 'subscriptions.plan', 'activeSubscription.plan', 'businessSuite']);
 
         $data = $company->toArray();
         $data['created_at'] = $this->formatDate($company->created_at);
         $data['updated_at'] = $this->formatDate($company->updated_at);
         $data['plan']       = $company->activeSubscription?->plan?->name;
+        $data['project_management_tool'] = $company->businessSuite?->project_managment_tool;
+        $data['sales_crm']  = $company->businessSuite?->sales_crm;
 
         if (!empty($data['users'])) {
             $data['users'] = collect($data['users'])->map(function ($u) {
@@ -105,6 +109,9 @@ class CompanyController extends Controller
             'user_name' => 'required|string|max:255',
             'user_email' => 'required|email|unique:users,email',
             'user_password' => 'required|min:6',
+
+            'project_management_tool' => 'nullable|boolean',
+            'sales_crm' => 'nullable|boolean',
         ]);
 
         try {
@@ -152,6 +159,13 @@ class CompanyController extends Controller
                 'company_id' => $company->id,
             ]);
 
+            \App\Models\Business_suite::create([
+                'user_id' => $user->id,
+                'project_managment_tool' => $request->project_management_tool ?? 0,
+                'sales_crm' => $request->sales_crm ?? 0,
+                'status' => 'active',
+            ]);
+
             return response()->json([
                 'company' => $company,
                 'user' => $user
@@ -180,6 +194,9 @@ class CompanyController extends Controller
             'db_port'     => 'nullable|integer',
 
             'db_mode'     => 'nullable|in:auto,external',
+
+            'project_management_tool' => 'nullable|boolean',
+            'sales_crm' => 'nullable|boolean',
         ]);
 
         $dbMode = $request->input('db_mode');
@@ -232,6 +249,19 @@ class CompanyController extends Controller
                 'action' => 'update_company',
                 'description' => "Company {$company->name} has been updated",
             ]);
+        }
+
+        if ($request->has('project_management_tool') || $request->has('sales_crm')) {
+            $adminUser = $company->users()->where('role', 'admin')->first();
+            if ($adminUser) {
+                \App\Models\Business_suite::updateOrCreate(
+                    ['user_id' => $adminUser->id],
+                    [
+                        'project_managment_tool' => $request->project_management_tool ?? 0,
+                        'sales_crm' => $request->sales_crm ?? 0,
+                    ]
+                );
+            }
         }
 
         $company = $company->fresh();

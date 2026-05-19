@@ -30,6 +30,8 @@ class SuperUserController extends Controller
                 'created_at'    => $this->formatDate($u->created_at),
                 'updated_at'    => $this->formatDate($u->updated_at),
                 'last_login_at' => $this->formatDate($u->last_login_at ?? null),
+                'sales_crm'     => $u->company?->businessSuite?->sales_crm,
+                'project_management_tool' => $u->company?->businessSuite?->project_managment_tool,
             ]
         );
 
@@ -40,7 +42,7 @@ class SuperUserController extends Controller
 
     public function index(Request $request): JsonResponse
     {
-        $query = User::with('company:id,name')
+        $query = User::with(['company:id,name,phone', 'company.businessSuite'])
             ->where('role', '!=', 'superadmin');
 
         if ($request->filled('company_id')) {
@@ -80,30 +82,51 @@ class SuperUserController extends Controller
 
             $perm = $permissions[$u->id] ?? null;
 
+            $salesCrm = $perm && $perm->sales_crm ? json_decode($perm->sales_crm, true) : null;
+            $pm = $perm && $perm->project_management_tool ? json_decode($perm->project_management_tool, true) : null;
+
             return [
-                'id' => $u->id,
-                'name' => $u->name,
-                'email' => $u->email,
-                'role' => $u->role,
-                'status' => $u->status,
-                'company' => $u->company ? [
-                    'id' => $u->company->id,
-                    'name' => $u->company->name
-                ] : null,
+                    'id' => $u->id,
+                    'name' => $u->name,
+                    'email' => $u->email,
+                    'role' => $u->role,
+                    'status' => $u->is_active == 1 ? 'Active' : 'Inactive',
+                    'created_at' => $this->formatDate($u->created_at),
+                    'company' => $u->company ? [
+                        'id' => $u->company->id,
+                        'name' => $u->company->name,
+                        'phone' => $u->company->phone,
+                        'sales_crm' => $u->company->businessSuite?->sales_crm,
+                        'project_management_tool' => $u->company->businessSuite?->project_managment_tool
+                    ] : null,
 
-                'permissions' => $perm ? [
-                    'contacts'    => $perm->contacts ? json_decode($perm->contacts, true) : [],
-                    'call_logs'   => $perm->call_logs ? json_decode($perm->call_logs, true) : [],
-                    'follow_ups'  => $perm->follow_ups ? json_decode($perm->follow_ups, true) : [],
-                    'teams'       => $perm->teams ? json_decode($perm->teams, true) : [],
+                'permissions' => ($salesCrm || $pm) ? [
+                    // Sales CRM
+                    'contacts'    => $salesCrm['contacts'] ?? [],
+                    'call_logs'   => $salesCrm['call_logs'] ?? [],
+                    'follow_ups'  => $salesCrm['follow_ups'] ?? [],
+                    'teams'       => $salesCrm['teams'] ?? [],
 
-                    'availability' => $perm->availability,
-                    'my_bookings'  => $perm->my_bookings,
-                    'settings'     => $perm->settings,
+                    'availability' => $salesCrm['availability'] ?? 0,
+                    'my_bookings'  => $salesCrm['my_bookings'] ?? 0,
+                    'settings'     => $salesCrm['settings'] ?? 0,
 
-                    'whatsapp'     => $perm->whatsapp,
-                    'ai_assistant' => $perm->ai_assistant,
-                    'email'        => $perm->email,
+                    'whatsapp'     => $salesCrm['whatsapp'] ?? 0,
+                    'ai_assistant' => $salesCrm['ai_assistant'] ?? 0,
+                    'email'        => $salesCrm['email'] ?? 0,
+
+                    // Project Management
+                    'backlog'      => $pm['backlog'] ?? 0,
+                    'board'        => $pm['board'] ?? 0,
+                    'gantt'        => $pm['gantt'] ?? 0,
+                    'pm_audit'     => $pm['pm_audit'] ?? 0,
+                    'timetracking' => $pm['timetracking'] ?? 0,
+                    'pm_roles'     => $pm['pm_roles'] ?? 0,
+                    'pm_system'    => $pm['pm_system'] ?? 0,
+                    'pm_users'     => $pm['pm_users'] ?? 0,
+                    'projects'     => $pm['projects'] ?? 0,
+                    'reports'      => $pm['reports'] ?? 0,
+                    'sprints'      => $pm['sprints'] ?? 0,
                 ] : null
             ];
         });
@@ -117,7 +140,7 @@ class SuperUserController extends Controller
     // ── SHOW ──────────────────────────────────────────────────────────────────
     public function show(User $user): JsonResponse
     {
-        $user->load('company:id,name');
+        $user->load(['company:id,name,phone', 'company.businessSuite']);
         return response()->json($this->transform($user));
     }
 
@@ -145,7 +168,7 @@ class SuperUserController extends Controller
             $user->company_id
         );
 
-        return response()->json($this->transform($user->load('company:id,name')), 201);
+        return response()->json($this->transform($user->load(['company:id,name,phone', 'company.businessSuite'])), 201);
     }
 
     public function update(Request $request, User $user): JsonResponse
@@ -173,7 +196,7 @@ class SuperUserController extends Controller
         $user->update($data);
 
         return response()->json(
-            $this->transform($user->fresh()->load('company:id,name'))
+            $this->transform($user->fresh()->load(['company:id,name,phone', 'company.businessSuite']))
         );
     }
 
