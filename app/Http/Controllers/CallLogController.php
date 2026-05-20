@@ -127,6 +127,8 @@ class CallLogController extends Controller
 
         $call->load('contact');
 
+        logActivity('create_call_log', "Call log for {$contact->name} has been created");
+
         return response()->json([
             'success' => true,
             'call' => $call
@@ -155,12 +157,16 @@ class CallLogController extends Controller
     public function update(Request $request, CallLog $call): JsonResponse
     {
         $call->update($request->all());
+        $contactName = $call->contact?->name ?? 'Unknown Contact';
+        logActivity('update_call_log', "Call log for {$contactName} has been updated");
         return response()->json(['success' => true, 'call' => $call]);
     }
 
     public function destroy(CallLog $call): JsonResponse
     {
+        $contactName = $call->contact?->name ?? 'Unknown Contact';
         $call->delete();
+        logActivity('delete_call_log', "Call log for {$contactName} has been deleted");
         return response()->json(['success' => true]);
     }
 
@@ -267,6 +273,8 @@ class CallLogController extends Controller
         }
 
         $call->load(['contact', 'user']);
+
+        logActivity('create_call_log', "Call log for {$contact->name} has been created (Quick Log)");
 
         return response()->json([
             'success' => true,

@@ -42,19 +42,24 @@ class SuperUserController extends Controller
 
     public function index(Request $request): JsonResponse
     {
-        $query = User::with(['company:id,name,phone', 'company.businessSuite'])
-            ->where('role', '!=', 'superadmin');
+        $query = User::with(['company:id,name,phone', 'businessSuite'])
+            ->notRole('superadmin');
 
         if ($request->filled('company_id')) {
             $query->where('company_id', $request->company_id);
         }
 
         if ($request->filled('role')) {
-            $query->where('role', $request->role);
+            $query->hasRole($request->role);
         }
 
         if ($request->filled('status')) {
-            $query->where('status', $request->status);
+            $status = strtolower((string)$request->status);
+            if ($status === 'active' || $status === '1') {
+                $query->where('is_active', 1);
+            } elseif ($status === 'inactive' || $status === '0') {
+                $query->where('is_active', 0);
+            }
         }
 
         if ($request->filled('search')) {
@@ -96,8 +101,8 @@ class SuperUserController extends Controller
                         'id' => $u->company->id,
                         'name' => $u->company->name,
                         'phone' => $u->company->phone,
-                        'sales_crm' => $u->company->businessSuite?->sales_crm,
-                        'project_management_tool' => $u->company->businessSuite?->project_managment_tool
+                        'sales_crm' => $u->businessSuite?->sales_crm,
+                        'project_management_tool' => $u->businessSuite?->project_managment_tool
                     ] : null,
 
                 'permissions' => ($salesCrm || $pm) ? [
@@ -123,6 +128,7 @@ class SuperUserController extends Controller
                     'timetracking' => $pm['timetracking'] ?? 0,
                     'pm_roles'     => $pm['pm_roles'] ?? 0,
                     'pm_system'    => $pm['pm_system'] ?? 0,
+                    'pm_settings'  => $pm['pm_settings'] ?? 0,
                     'pm_users'     => $pm['pm_users'] ?? 0,
                     'projects'     => $pm['projects'] ?? 0,
                     'reports'      => $pm['reports'] ?? 0,

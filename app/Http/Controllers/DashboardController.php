@@ -190,7 +190,7 @@ class DashboardController extends Controller
 
     public function teamStats()
     {
-        $users = User::where('role', 'sales_rep')
+        $users = User::hasRole('sales_rep')
             ->where('company_id', auth()->user()->company_id)
             ->get();
 
@@ -241,7 +241,7 @@ class DashboardController extends Controller
 
     public function teamAnalytics(): JsonResponse
     {
-        $users = User::where('role', 'sales_rep')
+        $users = User::hasRole('sales_rep')
             ->where('company_id', auth()->user()->company_id)
             ->get();
 
@@ -288,7 +288,7 @@ class DashboardController extends Controller
 
     private function getLeaderboard(): array
     {
-        return User::where('role', 'sales_rep')
+        return User::hasRole('sales_rep')
             ->where('company_id', auth()->user()->company_id)
             ->withCount([
                 'callLogs as calls_today' => function ($q) {

@@ -35,7 +35,7 @@ class RoleController extends Controller
      */
     public function index(): JsonResponse
     {
-        $roles = Role::withCount('users')->orderBy('id')->get();
+        $roles = Role::orderBy('id')->get();
         return response()->json($roles);
     }
 
@@ -45,7 +45,6 @@ class RoleController extends Controller
      */
     public function show(Role $role): JsonResponse
     {
-        $role->loadCount('users');
         return response()->json($role);
     }
 
@@ -70,7 +69,6 @@ class RoleController extends Controller
         $data['permissions'] = array_values(array_unique($data['permissions'] ?? []));
 
         $role = Role::create($data);
-        $role->loadCount('users');
 
         return response()->json($role, 201);
     }
@@ -96,7 +94,6 @@ class RoleController extends Controller
         }
 
         $role->update($data);
-        $role->loadCount('users');
 
         return response()->json($role);
     }
@@ -107,7 +104,7 @@ class RoleController extends Controller
      */
     public function destroy(Role $role): JsonResponse
     {
-        if ($role->users()->exists()) {
+        if (User::hasRole($role->name)->exists()) {
             return response()->json([
                 'message' => 'Cannot delete a role that still has users assigned. Re-assign those users first.',
             ], 422);
@@ -123,7 +120,7 @@ class RoleController extends Controller
      */
     public function users(Request $request, Role $role): JsonResponse
     {
-        $users = User::where('role', $role->name)
+        $users = User::hasRole($role->name)
             ->with('company:id,name')
             ->paginate($request->integer('per_page', 20));
 
@@ -142,7 +139,8 @@ class RoleController extends Controller
             'user_ids.*' => 'integer|exists:users,id',
         ]);
 
-        User::whereIn('id', $data['user_ids'])->update(['role' => $role->name]);
+        $roleJson = json_encode(['sales_crm' => $role->name]);
+        User::whereIn('id', $data['user_ids'])->update(['role' => $roleJson]);
 
         return response()->json([
             'message'  => 'Role assigned successfully.',

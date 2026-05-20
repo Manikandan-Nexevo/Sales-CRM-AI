@@ -65,7 +65,7 @@ class AuthController extends Controller
         }
 
         // ❌ Check Business Suite permission (except for superadmin)
-        if ($user->role !== 'superadmin') {
+        if ($user->normalized_role !== 'superadmin') {
             $company = $user->company;
             if (!$company) {
                 return response()->json([
@@ -95,11 +95,11 @@ class AuthController extends Controller
 
         // ❌ Check permission only for admin & sales_rep
         if (
-            in_array($user->role, ['admin', 'sales_rep']) &&
+            in_array($user->normalized_role, ['admin', 'sales_rep']) &&
             !$roles_permission
         ) {
             return response()->json([
-                'message' => 'Your account permissions have not been configured yet. Please contact the administrator.'
+                'message' => 'Your account does not have permission to access the Sales CRM. Please contact the administrator.'
             ], 403);
         }
 
@@ -108,7 +108,7 @@ class AuthController extends Controller
 
         $token = $user->createToken('auth-token')->plainTextToken;
 
-        $redirect = $user->role === 'superadmin' ? '/super' : '/';
+        $redirect = $user->normalized_role === 'superadmin' ? '/super' : '/';
 
         return response()->json([
             'success'          => true,

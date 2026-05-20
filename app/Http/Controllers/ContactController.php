@@ -70,6 +70,8 @@ class ContactController extends Controller
             'assigned_to' => $request->assigned_to ?? $request->user()->id,
         ]);
 
+        logActivity('create_contact', "Contact {$contact->name} has been created");
+
         return response()->json([
             'success' => true,
             'contact' => $contact
@@ -100,6 +102,8 @@ class ContactController extends Controller
         $contact->assigned_to = $request->assigned_to;
         $contact->save();
 
+        logActivity('assign_contact', "Contact {$contact->name} has been assigned to user ID {$contact->assigned_to}");
+
         return response()->json([
             'message' => 'Lead assigned successfully'
         ]);
@@ -111,6 +115,8 @@ class ContactController extends Controller
 
         $contact->update($request->all());
 
+        logActivity('update_contact', "Contact {$contact->name} has been updated");
+
         return response()->json([
             'success' => true,
             'contact' => $contact
@@ -120,6 +126,9 @@ class ContactController extends Controller
     public function destroy(Contact $contact): JsonResponse
     {
         $contact->delete();
+
+        logActivity('delete_contact', "Contact {$contact->name} has been deleted");
+
         return response()->json(['success' => true]);
     }
 
@@ -137,6 +146,9 @@ class ContactController extends Controller
     {
         $request->validate(['status' => 'required|in:new,contacted,interested,qualified,hot,proposal,closed_won,closed_lost,not_interested']);
         $contact->update(['status' => $request->status]);
+
+        logActivity('update_contact_status', "Contact {$contact->name} status has been updated to {$contact->status}");
+
         return response()->json(['success' => true, 'contact' => $contact]);
     }
 
@@ -147,6 +159,9 @@ class ContactController extends Controller
             'linkedin_url' => $request->linkedin_url,
             'linkedin_connected' => $request->connected ?? false,
         ]);
+
+        logActivity('update_contact_linkedin', "Contact {$contact->name} LinkedIn info has been updated");
+
         return response()->json(['success' => true, 'contact' => $contact]);
     }
 

@@ -233,4 +233,14 @@ CREATE TABLE `task` (
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
+CREATE TABLE `project_members` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `project_id` INT NOT NULL,
+  `user_id` INT NOT NULL,
+  `invited_by` INT NULL,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+   PRIMARY KEY (`id`),
+   UNIQUE KEY `uq_proj_user` (`project_id`, `user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
 SET FOREIGN_KEY_CHECKS = 1;

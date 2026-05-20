@@ -8,9 +8,10 @@ class Role extends Model
 {
     protected $fillable = ['name', 'label', 'description', 'permissions', 'color'];
     protected $casts    = ['permissions' => 'array'];
+    protected $appends  = ['users_count'];
 
-    public function users()
+    public function getUsersCountAttribute()
     {
-        return $this->hasMany(User::class, 'role', 'name');
+        return User::hasRole($this->name)->count();
     }
 }

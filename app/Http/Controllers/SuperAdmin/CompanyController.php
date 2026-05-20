@@ -252,7 +252,7 @@ class CompanyController extends Controller
         }
 
         if ($request->has('project_management_tool') || $request->has('sales_crm')) {
-            $adminUser = $company->users()->where('role', 'admin')->first();
+            $adminUser = $company->users()->hasRole('admin')->first();
             if ($adminUser) {
                 \App\Models\Business_suite::updateOrCreate(
                     ['user_id' => $adminUser->id],

@@ -54,7 +54,7 @@ class UserController extends Controller
         $user = auth()->user();
         $companyId = $user->company_id;
 
-        if ($user->role !== 'admin' && $user->role !== 'manager') {
+        if ($user->normalized_role !== 'admin' && $user->normalized_role !== 'manager') {
             // Sales reps and others get a simple list for dropdowns etc.
             $users = User::where('company_id', $companyId)
                 ->where('is_active', true)
@@ -82,8 +82,25 @@ class UserController extends Controller
     public function store(Request $request): JsonResponse
     {
         // Only admins / managers may create team members
-        if (auth()->user()->role !== 'admin' && auth()->user()->role !== 'manager') {
+        if (auth()->user()->normalized_role !== 'admin' && auth()->user()->normalized_role !== 'manager') {
             abort(403, 'This action is unauthorized.');
+        }
+
+        $roleInput = $request->input('role');
+        $normalizedRole = null;
+        if (is_array($roleInput)) {
+            $normalizedRole = $roleInput['sales_crm'] ?? $roleInput['project_management_tool'] ?? reset($roleInput);
+        } elseif (is_string($roleInput) && strpos($roleInput, '{') === 0) {
+            $decoded = json_decode($roleInput, true);
+            if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+                $normalizedRole = $decoded['sales_crm'] ?? $decoded['project_management_tool'] ?? reset($decoded);
+            }
+        } else {
+            $normalizedRole = $roleInput;
+        }
+
+        if ($normalizedRole) {
+            $request->merge(['role' => $normalizedRole]);
         }
 
         $data = $request->validate([
@@ -103,13 +120,23 @@ class UserController extends Controller
             'email'                => strtolower($data['email']),
             'phone'                => $data['phone'] ?? null,
             'password'             => Hash::make($data['password']),
-            'role'                 => $data['role'],
+            'role'                 => $roleInput ?? $data['role'],
             'permissions'          => array_values(array_unique($data['permissions'] ?? [])),
             'company_id'           => auth()->user()->company_id,
             'is_active'            => true,
             'target_calls_daily'   => $data['target_calls_daily'] ?? 50,
             'target_leads_monthly' => $data['target_leads_monthly'] ?? 10,
         ]);
+
+        // Create business suite entry for the created user
+        \App\Models\Business_suite::create([
+            'user_id' => $user->id,
+            'sales_crm' => 1,
+            'project_managment_tool' => 0,
+            'status' => 'active',
+        ]);
+
+        logActivity('create_team_member', "Team member {$user->name} has been created");
 
         return response()->json([
             'success' => true,
@@ -135,8 +162,25 @@ class UserController extends Controller
     public function update(Request $request, User $user): JsonResponse
     {
         $this->ensureSameCompany($user);
-        if (auth()->user()->role !== 'admin' && auth()->user()->role !== 'manager') {
+        if (auth()->user()->normalized_role !== 'admin' && auth()->user()->normalized_role !== 'manager') {
             abort(403, 'This action is unauthorized.');
+        }
+
+        $roleInput = $request->input('role');
+        $normalizedRole = null;
+        if (is_array($roleInput)) {
+            $normalizedRole = $roleInput['sales_crm'] ?? $roleInput['project_management_tool'] ?? reset($roleInput);
+        } elseif (is_string($roleInput) && strpos($roleInput, '{') === 0) {
+            $decoded = json_decode($roleInput, true);
+            if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+                $normalizedRole = $decoded['sales_crm'] ?? $decoded['project_management_tool'] ?? reset($decoded);
+            }
+        } else {
+            $normalizedRole = $roleInput;
+        }
+
+        if ($normalizedRole) {
+            $request->merge(['role' => $normalizedRole]);
         }
 
         $data = $request->validate([
@@ -148,8 +192,14 @@ class UserController extends Controller
             'is_active' => ['sometimes', 'boolean'],
         ]);
 
+        if (isset($data['role'])) {
+            $data['role'] = $roleInput ?? $data['role'];
+        }
+
         // Never allow email / password update through this endpoint
         $user->update($data);
+
+        logActivity('update_team_member', "Team member {$user->name} has been updated");
 
         return response()->json([
             'success' => true,
@@ -164,11 +214,13 @@ class UserController extends Controller
     public function destroy(User $user): JsonResponse
     {
         $this->ensureSameCompany($user);
-        if (auth()->user()->role !== 'admin' && auth()->user()->role !== 'manager') {
+        if (auth()->user()->normalized_role !== 'admin' && auth()->user()->normalized_role !== 'manager') {
             abort(403, 'This action is unauthorized.');
         }
 
         $user->update(['is_active' => false]);
+
+        logActivity('deactivate_team_member', "Team member {$user->name} has been deactivated");
 
         return response()->json(['success' => true, 'message' => 'User deactivated.']);
     }
@@ -179,7 +231,7 @@ class UserController extends Controller
     public function updatePermissions(Request $request, User $user): JsonResponse
     {
         $this->ensureSameCompany($user);
-        if (auth()->user()->role !== 'admin' && auth()->user()->role !== 'manager') {
+        if (auth()->user()->normalized_role !== 'admin' && auth()->user()->normalized_role !== 'manager') {
             abort(403, 'This action is unauthorized.');
         }
 

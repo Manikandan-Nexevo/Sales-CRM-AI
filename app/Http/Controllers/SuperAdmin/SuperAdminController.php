@@ -18,7 +18,7 @@ class SuperAdminController extends Controller
     public function dashboard(): JsonResponse
     {
         $totalCompanies = Company::count();
-        $totalUsers = User::where('role', '!=', 'superadmin')->count();
+        $totalUsers = User::notRole('superadmin')->count();
 
         $newCompaniesThisMonth = Company::whereMonth('created_at', now()->month)->count();
 

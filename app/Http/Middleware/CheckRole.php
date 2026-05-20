@@ -11,7 +11,7 @@ class CheckRole
     {
         $user = $request->user();
 
-        if (!$user || !in_array($user->role, $roles)) {
+        if (!$user || !in_array($user->normalized_role, $roles)) {
             return response()->json(['message' => 'Forbidden. Insufficient role.'], 403);
         }
 
